@@ -17,9 +17,9 @@ fn main() -> io::Result<()> {
     };
 
     let file = read_to_string(file_path)?;
-    let Ok(ast) = Parser::new(Tokens::new(file_path, &file)).expression() else {
-        unreachable!()
-    };
+    let ast = Parser::new(Tokens::new(file_path, &file))
+        .expression()
+        .unwrap();
 
     ast.data.pretty_print();
     Ok(())

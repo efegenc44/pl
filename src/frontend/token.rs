@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token<'source> {
     Identifier(&'source str),
     Integer(&'source str),
@@ -9,6 +9,7 @@ pub enum Token<'source> {
     Operator(&'source str),
     OpeningParenthesis,
     ClosingParenthesis,
+    Comma,
 }
 
 impl Display for Token<'_> {
@@ -23,6 +24,7 @@ impl Display for Token<'_> {
             }
             Self::OpeningParenthesis => write!(f, "("),
             Self::ClosingParenthesis => write!(f, ")"),
+            Self::Comma => write!(f, ","),
         }
     }
 }

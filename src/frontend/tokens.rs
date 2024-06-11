@@ -47,6 +47,12 @@ impl<'source> Tokens<'source> {
         }
     }
 
+    fn single_char(&mut self, token: Token<'source>) -> Token<'source> {
+        self.chars.next();
+        self.row += 1;
+        token
+    }
+
     fn identifier(&mut self) -> Spanned<'source, Token<'source>> {
         let start_indice = self.current_indice();
         let start_position = self.current_position();
@@ -112,20 +118,13 @@ impl<'source> Tokens<'source> {
     }
 
     fn symbol(&mut self) -> Spanned<'source, Token<'source>> {
-        const PUNCTUATIONS: [char; 4] = ['(', ')', '"', '.'];
+        const PUNCTUATIONS: [char; 5] = ['(', ')', '"', '.', ','];
 
         let start_position = self.current_position();
         let token = match self.chars.peek().unwrap().1 {
-            '(' => {
-                self.chars.next();
-                self.row += 1;
-                Token::OpeningParenthesis
-            }
-            ')' => {
-                self.chars.next();
-                self.row += 1;
-                Token::ClosingParenthesis
-            }
+            '(' => self.single_char(Token::OpeningParenthesis),
+            ')' => self.single_char(Token::ClosingParenthesis),
+            ',' => self.single_char(Token::Comma),
             _ => {
                 let start_indice = self.current_indice();
                 self.continuously_advance(|ch| {

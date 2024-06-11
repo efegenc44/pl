@@ -44,6 +44,12 @@ impl<'source> Parser<'source> {
         }
     }
 
+    fn peek_is(&mut self, expected: Token) -> bool {
+        self.tokens
+            .peek()
+            .map_or(false, |peeked| peeked.data == expected)
+    }
+
     fn grouping(&mut self) -> ParseResult<'source, Spanned<'source, Expression<'source>>> {
         let start = self.expect(Token::OpeningParenthesis)?;
         let expr = self.expression()?;
@@ -85,11 +91,37 @@ impl<'source> Parser<'source> {
         }
     }
 
+    fn application(&mut self) -> ParseResult<'source, Spanned<'source, Expression<'source>>> {
+        let mut expr = self.primary()?;
+
+        while let Some(Token::OpeningParenthesis) = self.tokens.peek().map(|peeked| &peeked.data) {
+            self.tokens.next();
+            let mut args = vec![];
+            if !self.peek_is(Token::ClosingParenthesis) {
+                args.push(self.expression()?);
+                while !self.peek_is(Token::ClosingParenthesis) {
+                    self.expect(Token::Comma)?;
+                    args.push(self.expression()?);
+                }
+            }
+            let end = self.expect(Token::ClosingParenthesis)?;
+
+            let span = expr.span.extend(end);
+            expr = Expression::Application {
+                expr: Box::new(expr),
+                args,
+            }
+            .attach(span)
+        }
+
+        Ok(expr)
+    }
+
     fn binary(
         &mut self,
         min_precedence: usize,
     ) -> ParseResult<'source, Spanned<'source, Expression<'source>>> {
-        let mut lhs = self.primary()?;
+        let mut lhs = self.application()?;
 
         while let Some(Token::Operator(lexeme)) = self.tokens.peek().map(|peeked| &peeked.data) {
             let (lexeme, assoc, op_precedence) =
@@ -123,6 +155,7 @@ impl<'source> Parser<'source> {
     }
 }
 
+#[derive(Debug)]
 pub enum ParseError<'source> {
     UnexpectedEOF,
     UnexpectedToken(Token<'source>),

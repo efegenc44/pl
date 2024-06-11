@@ -1,5 +1,6 @@
 use crate::frontend::span::{Span, Spanned};
 
+#[derive(Debug)]
 pub enum Expression<'source> {
     Identifier(&'source str),
     Integer(&'source str),
@@ -9,6 +10,10 @@ pub enum Expression<'source> {
         lhs: Box<Spanned<'source, Expression<'source>>>,
         op: &'source str,
         rhs: Box<Spanned<'source, Expression<'source>>>,
+    },
+    Application {
+        expr: Box<Spanned<'source, Expression<'source>>>,
+        args: Vec<Spanned<'source, Expression<'source>>>,
     },
 }
 
@@ -31,6 +36,13 @@ impl<'source> Expression<'source> {
                 lhs.data._pretty_print(depth + 1);
                 print!("{:>indent$}", "");
                 rhs.data._pretty_print(depth + 1);
+            }
+            Self::Application { expr, args } => {
+                expr.data._pretty_print(depth);
+                for arg in args {
+                    print!("{:>indent$}", "");
+                    arg.data._pretty_print(depth + 1);
+                }
             }
         }
     }
