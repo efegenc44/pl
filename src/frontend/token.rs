@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Token<'source> {
     Identifier(&'source str),
     Integer(&'source str),

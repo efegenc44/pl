@@ -112,7 +112,7 @@ impl<'source> Tokens<'source> {
     }
 
     fn symbol(&mut self) -> Spanned<'source, Token<'source>> {
-        const PUNCTUATIONS: [char; 3] = ['(', ')', '"'];
+        const PUNCTUATIONS: [char; 4] = ['(', ')', '"', '.'];
 
         let start_position = self.current_position();
         let token = match self.chars.peek().unwrap().1 {

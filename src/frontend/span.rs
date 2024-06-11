@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+#[derive(Clone, Copy)]
 pub struct Span<'source> {
     source_name: &'source str,
     start: FilePosition,
@@ -12,6 +13,14 @@ impl<'source> Span<'source> {
             source_name,
             start,
             end,
+        }
+    }
+
+    pub fn extend(self, other: Self) -> Self {
+        Self {
+            source_name: self.source_name,
+            start: self.start,
+            end: other.end,
         }
     }
 }
@@ -27,8 +36,8 @@ impl Display for Span<'_> {
 }
 
 pub struct Spanned<'source, T> {
-    data: T,
-    span: Span<'source>,
+    pub data: T,
+    pub span: Span<'source>,
 }
 
 impl<'source, T> Spanned<'source, T> {
@@ -43,6 +52,7 @@ impl<T: Display> Display for Spanned<'_, T> {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct FilePosition {
     row: usize,
     col: usize,
