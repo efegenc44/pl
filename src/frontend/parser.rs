@@ -1,4 +1,4 @@
-use std::iter::Peekable;
+use std::{fmt::Display, iter::Peekable};
 
 use crate::{
     backend::ast::{Expression, Pattern},
@@ -25,25 +25,31 @@ const OPERATORS: [(&str, Associativity, usize); 4] = [
 ];
 
 pub struct Parser<'source> {
+    source_name: &'source str,
     tokens: Peekable<Tokens<'source>>,
 }
 
 impl<'source> Parser<'source> {
     pub fn new(tokens: Tokens<'source>) -> Self {
         Self {
+            source_name: tokens.source_name(),
             tokens: tokens.peekable(),
         }
     }
 
+    fn unexpected_eof<T>(&self) -> ParseResult<'source, T> {
+        Err(ParseError::UnexpectedEOF.attach(Span::eof(self.source_name)))
+    }
+
     fn expect(&mut self, expected: Token) -> ParseResult<'source, Span<'source>> {
         let Some(spanned_token) = self.tokens.next() else {
-            return Err(ParseError::UnexpectedEOF);
+            return self.unexpected_eof()
         };
 
         if spanned_token.data == expected {
             Ok(spanned_token.span)
         } else {
-            Err(ParseError::UnexpectedToken(spanned_token.data))
+            Err(ParseError::UnexpectedToken(spanned_token.data).attach(spanned_token.span))
         }
     }
 
@@ -109,7 +115,7 @@ impl<'source> Parser<'source> {
 
     fn pattern(&mut self) -> ParseResult<'source, Spanned<'source, Pattern<'source>>> {
         let Some(spanned_token) = self.tokens.peek() else {
-            return Err(ParseError::UnexpectedEOF)
+            return self.unexpected_eof()
         };
 
         match &spanned_token.data {
@@ -134,15 +140,13 @@ impl<'source> Parser<'source> {
                 Ok(pattern)
             }
             Token::OpeningParenthesis => self.pattern_grouping(),
-            _ => Err(ParseError::UnexpectedToken(
-                self.tokens.next().unwrap().data,
-            )),
+            unexpected => Err(ParseError::UnexpectedToken(*unexpected).attach(spanned_token.span)),
         }
     }
 
     fn primary(&mut self) -> ParseResult<'source, Spanned<'source, Expression<'source>>> {
         let Some(spanned_token) = self.tokens.peek() else {
-            return Err(ParseError::UnexpectedEOF)
+            return self.unexpected_eof()
         };
 
         match &spanned_token.data {
@@ -169,9 +173,7 @@ impl<'source> Parser<'source> {
             Token::OpeningParenthesis => self.grouping(),
             Token::KeywordLet => self.lett(),
             Token::Operator("\\") => self.lambda(),
-            _ => Err(ParseError::UnexpectedToken(
-                self.tokens.next().unwrap().data,
-            )),
+            unexpected => Err(ParseError::UnexpectedToken(*unexpected).attach(spanned_token.span)),
         }
     }
 
@@ -244,4 +246,20 @@ pub enum ParseError<'source> {
     UnexpectedEOF,
     UnexpectedToken(Token<'source>),
 }
-type ParseResult<'a, T> = Result<T, ParseError<'a>>;
+
+impl<'source> ParseError<'source> {
+    fn attach(self, span: Span<'source>) -> Spanned<'source, Self> {
+        Spanned::new(self, span)
+    }
+}
+
+impl Display for ParseError<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnexpectedEOF => write!(f, "Unexpected EOF."),
+            Self::UnexpectedToken(unexpected) => write!(f, "Unexpected token: `{unexpected}`."),
+        }
+    }
+}
+
+type ParseResult<'a, T> = Result<T, Spanned<'a, ParseError<'a>>>;

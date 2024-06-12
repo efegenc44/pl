@@ -2,9 +2,9 @@ use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Span<'source> {
-    source_name: &'source str,
-    start: FilePosition,
-    end: FilePosition,
+    pub source_name: &'source str,
+    pub start: FilePosition,
+    pub end: FilePosition,
 }
 
 impl<'source> Span<'source> {
@@ -21,6 +21,14 @@ impl<'source> Span<'source> {
             source_name: self.source_name,
             start: self.start,
             end: other.end,
+        }
+    }
+
+    pub fn eof(source_name: &'source str) -> Self {
+        Self {
+            source_name,
+            start: FilePosition::new(0, 0),
+            end: FilePosition::new(0, 0),
         }
     }
 }
@@ -53,10 +61,10 @@ impl<T: Display> Display for Spanned<'_, T> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilePosition {
-    row: usize,
-    col: usize,
+    pub row: usize,
+    pub col: usize,
 }
 
 impl FilePosition {
@@ -67,6 +75,6 @@ impl FilePosition {
 
 impl Display for FilePosition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.col, self.row)
+        write!(f, "{}:{}", self.row, self.col)
     }
 }

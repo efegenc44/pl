@@ -21,11 +21,16 @@ fn main() -> io::Result<()> {
 
 fn start_from_file(file_path: &str) -> io::Result<()> {
     let file = read_to_string(file_path)?;
-    let ast = Parser::new(Tokens::new(file_path, &file))
-        .expression()
-        .unwrap();
+    let ast = match Parser::new(Tokens::new(file_path, &file)).expression() {
+        Ok(ast) => ast,
+        Err(err) => return err.report(&file),
+    };
+
     ast.data.pretty_print();
-    let resolved_ast = NameResolver::new().resolve_names(ast);
+    let resolved_ast = match NameResolver::new().resolve_names(ast) {
+        Ok(resolved_ast) => resolved_ast,
+        Err(err) => return err.report(&file),
+    };
     resolved_ast.data.pretty_print();
     Ok(())
 }
@@ -48,12 +53,22 @@ fn start_repl() -> io::Result<()> {
             _ => (),
         }
 
-        let ast = Parser::new(Tokens::new("REPL", input))
-            .expression()
-            .unwrap();
-
+        let ast = match Parser::new(Tokens::new("REPL", input)).expression() {
+            Ok(ast) => ast,
+            Err(err) => {
+                err.report(input)?;
+                continue;
+            }
+        };
         ast.data.pretty_print();
-        let resolved_ast = NameResolver::new().resolve_names(ast);
+
+        let resolved_ast = match NameResolver::new().resolve_names(ast) {
+            Ok(resolved_ast) => resolved_ast,
+            Err(err) => {
+                err.report(input)?;
+                continue;
+            }
+        };
         resolved_ast.data.pretty_print();
     }
 }

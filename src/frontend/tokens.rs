@@ -43,13 +43,13 @@ impl<'source> Tokens<'source> {
         F: Fn(&char) -> bool,
     {
         while self.chars.next_if(|(_, ch)| f(ch)).is_some() {
-            self.row += 1;
+            self.col += 1;
         }
     }
 
     fn single_char(&mut self, token: Token<'source>) -> Token<'source> {
         self.chars.next();
-        self.row += 1;
+        self.col += 1;
         token
     }
 
@@ -76,7 +76,7 @@ impl<'source> Tokens<'source> {
         let start_position = self.current_position();
         self.continuously_advance(|ch| ch.is_ascii_digit() || ch == &'_');
         let constructor = if self.chars.next_if(|(_, ch)| ch == &'.').is_some() {
-            self.row += 1;
+            self.col += 1;
             self.continuously_advance(|ch| ch.is_ascii_digit() || ch == &'_');
             Token::Float
         } else {
@@ -97,13 +97,13 @@ impl<'source> Tokens<'source> {
         let start_indice = self.current_indice();
         let start_position = self.current_position();
         self.chars.next(); // Skip the first '"'.
-        self.row += 1;
+        self.col += 1;
         while let Some((_, ch)) = self.chars.next_if(|(_, ch)| ch != &'"') {
             if ch == '\n' {
-                self.row = 1;
-                self.col += 1;
-            } else {
+                self.col = 1;
                 self.row += 1;
+            } else {
+                self.col += 1;
             }
         }
 
@@ -147,6 +147,10 @@ impl<'source> Tokens<'source> {
             Span::new(self.source_name, start_position, end_position),
         )
     }
+
+    pub fn source_name(&self) -> &'source str {
+        self.source_name
+    }
 }
 
 impl<'source> Iterator for Tokens<'source> {
@@ -156,10 +160,10 @@ impl<'source> Iterator for Tokens<'source> {
         // Skip whitespaces.
         while let Some((_, ch)) = self.chars.next_if(|(_, ch)| ch.is_whitespace()) {
             if ch == '\n' {
-                self.row = 1;
-                self.col += 1;
-            } else {
+                self.col = 1;
                 self.row += 1;
+            } else {
+                self.col += 1;
             }
         }
 
