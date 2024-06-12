@@ -7,6 +7,7 @@ use std::{
     io::{self, stderr, stdin, stdout, Write},
 };
 
+use backend::nameresolver::NameResolver;
 use frontend::{parser::Parser, tokens::Tokens};
 
 fn main() -> io::Result<()> {
@@ -24,6 +25,8 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
         .expression()
         .unwrap();
     ast.data.pretty_print();
+    let resolved_ast = NameResolver::new().resolve_names(ast);
+    resolved_ast.data.pretty_print();
     Ok(())
 }
 
@@ -50,5 +53,7 @@ fn start_repl() -> io::Result<()> {
             .unwrap();
 
         ast.data.pretty_print();
+        let resolved_ast = NameResolver::new().resolve_names(ast);
+        resolved_ast.data.pretty_print();
     }
 }
