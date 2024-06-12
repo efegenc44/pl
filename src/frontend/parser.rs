@@ -1,6 +1,9 @@
 use std::iter::Peekable;
 
-use crate::{backend::ast::Expression, frontend::token::Token};
+use crate::{
+    backend::ast::{Expression, Pattern},
+    frontend::token::Token,
+};
 
 use super::{
     span::{Span, Spanned},
@@ -44,6 +47,18 @@ impl<'source> Parser<'source> {
         }
     }
 
+    fn expect_identifier(&mut self) -> ParseResult<'source, Spanned<'source, &'source str>> {
+        let Some(spanned_token) = self.tokens.next() else {
+            return Err(ParseError::UnexpectedEOF);
+        };
+
+        let Token::Identifier(identifier) = spanned_token.data else {
+            return Err(ParseError::UnexpectedToken(spanned_token.data))
+        };
+
+        Ok(Spanned::new(identifier, spanned_token.span))
+    }
+
     fn peek_is(&mut self, expected: Token) -> bool {
         self.tokens
             .peek()
@@ -56,6 +71,64 @@ impl<'source> Parser<'source> {
         let end = self.expect(Token::ClosingParenthesis)?;
 
         Ok(Spanned::new(expr.data, start.extend(end)))
+    }
+
+    fn pattern_grouping(&mut self) -> ParseResult<'source, Spanned<'source, Pattern<'source>>> {
+        let start = self.expect(Token::OpeningParenthesis)?;
+        let expr = self.pattern()?;
+        let end = self.expect(Token::ClosingParenthesis)?;
+
+        Ok(expr.data.attach(start.extend(end)))
+    }
+
+    fn lett(&mut self) -> ParseResult<'source, Spanned<'source, Expression<'source>>> {
+        let start = self.expect(Token::KeywordLet)?;
+        let pattern = self.pattern()?;
+        self.expect(Token::Operator("="))?;
+        let expr = Box::new(self.expression()?);
+        self.expect(Token::KeywordIn)?;
+        let body = Box::new(self.expression()?);
+        let end = body.span;
+
+        Ok(Expression::Let {
+            pattern,
+            expr,
+            body,
+        }
+        .attach(start.extend(end)))
+    }
+
+    fn pattern(&mut self) -> ParseResult<'source, Spanned<'source, Pattern<'source>>> {
+        let Some(spanned_token) = self.tokens.peek() else {
+            return Err(ParseError::UnexpectedEOF)
+        };
+
+        match &spanned_token.data {
+            Token::Identifier(identifier) => {
+                let pattern = Pattern::Any(identifier).attach(spanned_token.span);
+                self.tokens.next();
+                Ok(pattern)
+            }
+            Token::Integer(integer) => {
+                let pattern = Pattern::Integer(integer).attach(spanned_token.span);
+                self.tokens.next();
+                Ok(pattern)
+            }
+            Token::Float(float) => {
+                let pattern = Pattern::Float(float).attach(spanned_token.span);
+                self.tokens.next();
+                Ok(pattern)
+            }
+            Token::String(string) => {
+                let pattern = Pattern::String(string).attach(spanned_token.span);
+                self.tokens.next();
+                Ok(pattern)
+            }
+            Token::OpeningParenthesis => self.pattern_grouping(),
+            _ => Err(ParseError::UnexpectedToken(
+                self.tokens.next().unwrap().data,
+            )),
+        }
     }
 
     fn primary(&mut self) -> ParseResult<'source, Spanned<'source, Expression<'source>>> {
@@ -85,6 +158,7 @@ impl<'source> Parser<'source> {
                 Ok(expr)
             }
             Token::OpeningParenthesis => self.grouping(),
+            Token::KeywordLet => self.lett(),
             _ => Err(ParseError::UnexpectedToken(
                 self.tokens.next().unwrap().data,
             )),

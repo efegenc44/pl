@@ -10,6 +10,8 @@ pub enum Token<'source> {
     OpeningParenthesis,
     ClosingParenthesis,
     Comma,
+    KeywordLet,
+    KeywordIn,
 }
 
 impl Display for Token<'_> {
@@ -25,6 +27,8 @@ impl Display for Token<'_> {
             Self::OpeningParenthesis => write!(f, "("),
             Self::ClosingParenthesis => write!(f, ")"),
             Self::Comma => write!(f, ","),
+            Self::KeywordLet => write!(f, "let"),
+            Self::KeywordIn => write!(f, "in"),
         }
     }
 }

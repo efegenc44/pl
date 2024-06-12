@@ -53,16 +53,20 @@ impl<'source> Tokens<'source> {
         token
     }
 
-    fn identifier(&mut self) -> Spanned<'source, Token<'source>> {
+    fn keyword_or_identifier(&mut self) -> Spanned<'source, Token<'source>> {
         let start_indice = self.current_indice();
         let start_position = self.current_position();
         self.continuously_advance(|ch| ch.is_alphanumeric() || ['_', '\''].contains(ch));
         let end_position = self.current_position();
         let end_indice = self.current_indice();
 
-        let lexeme = &self.source[start_indice..end_indice];
+        let token = match &self.source[start_indice..end_indice] {
+            "let" => Token::KeywordLet,
+            "in" => Token::KeywordIn,
+            identifier => Token::Identifier(identifier),
+        };
         Spanned::new(
-            Token::Identifier(lexeme),
+            token,
             Span::new(self.source_name, start_position, end_position),
         )
     }
@@ -164,7 +168,7 @@ impl<'source> Iterator for Tokens<'source> {
         };
 
         Some(if ch.is_alphabetic() {
-            self.identifier()
+            self.keyword_or_identifier()
         } else if ch.is_ascii_digit() {
             self.numeric()
         } else if ch == &'"' {
