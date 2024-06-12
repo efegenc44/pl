@@ -47,18 +47,6 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn expect_identifier(&mut self) -> ParseResult<'source, Spanned<'source, &'source str>> {
-        let Some(spanned_token) = self.tokens.next() else {
-            return Err(ParseError::UnexpectedEOF);
-        };
-
-        let Token::Identifier(identifier) = spanned_token.data else {
-            return Err(ParseError::UnexpectedToken(spanned_token.data))
-        };
-
-        Ok(Spanned::new(identifier, spanned_token.span))
-    }
-
     fn peek_is(&mut self, expected: Token) -> bool {
         self.tokens
             .peek()
@@ -70,7 +58,7 @@ impl<'source> Parser<'source> {
         let expr = self.expression()?;
         let end = self.expect(Token::ClosingParenthesis)?;
 
-        Ok(Spanned::new(expr.data, start.extend(end)))
+        Ok(expr.data.attach(start.extend(end)))
     }
 
     fn pattern_grouping(&mut self) -> ParseResult<'source, Spanned<'source, Pattern<'source>>> {
@@ -85,15 +73,36 @@ impl<'source> Parser<'source> {
         let start = self.expect(Token::KeywordLet)?;
         let pattern = self.pattern()?;
         self.expect(Token::Operator("="))?;
-        let expr = Box::new(self.expression()?);
+        let expr = self.expression()?;
         self.expect(Token::KeywordIn)?;
-        let body = Box::new(self.expression()?);
+        let body = self.expression()?;
         let end = body.span;
 
         Ok(Expression::Let {
             pattern,
-            expr,
-            body,
+            expr: Box::new(expr),
+            body: Box::new(body),
+        }
+        .attach(start.extend(end)))
+    }
+
+    fn lambda(&mut self) -> ParseResult<'source, Spanned<'source, Expression<'source>>> {
+        let start = self.expect(Token::Operator("\\"))?;
+        let mut params = vec![];
+        if !self.peek_is(Token::Operator("->")) {
+            params.push(self.pattern()?);
+            while !self.peek_is(Token::Operator("->")) {
+                self.expect(Token::Comma)?;
+                params.push(self.pattern()?);
+            }
+        }
+        self.expect(Token::Operator("->"))?;
+        let body = self.expression()?;
+        let end = body.span;
+
+        Ok(Expression::Lambda {
+            params,
+            body: Box::new(body),
         }
         .attach(start.extend(end)))
     }
@@ -159,6 +168,7 @@ impl<'source> Parser<'source> {
             }
             Token::OpeningParenthesis => self.grouping(),
             Token::KeywordLet => self.lett(),
+            Token::Operator("\\") => self.lambda(),
             _ => Err(ParseError::UnexpectedToken(
                 self.tokens.next().unwrap().data,
             )),

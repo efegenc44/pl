@@ -42,10 +42,10 @@ fn start_repl() -> io::Result<()> {
         match input {
             ".exit" => break Ok(()),
             "" => continue,
-            _ => ()
+            _ => (),
         }
 
-        let ast = Parser::new(Tokens::new("REPL", &input))
+        let ast = Parser::new(Tokens::new("REPL", input))
             .expression()
             .unwrap();
 

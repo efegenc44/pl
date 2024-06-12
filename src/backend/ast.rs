@@ -22,6 +22,10 @@ pub enum Expression<'source> {
         expr: Box<Spanned<'source, Expression<'source>>>,
         body: Box<Spanned<'source, Expression<'source>>>,
     },
+    Lambda {
+        params: Vec<Spanned<'source, Pattern<'source>>>,
+        body: Box<Spanned<'source, Expression<'source>>>,
+    },
 }
 
 impl<'source> Expression<'source> {
@@ -67,6 +71,16 @@ impl<'source> Expression<'source> {
                 pattern.data._pretty_print(depth + 1);
                 indented("expr: ", depth + 1);
                 expr.data._pretty_print(depth + 1);
+                indented("body: ", depth + 1);
+                body.data._pretty_print(depth + 1);
+            }
+            Self::Lambda { params, body } => {
+                println!("Lambda:");
+                indented("params:\n", depth + 1);
+                for param in params {
+                    indented("", depth + 2);
+                    param.data._pretty_print(depth + 2);
+                }
                 indented("body: ", depth + 1);
                 body.data._pretty_print(depth + 1);
             }
