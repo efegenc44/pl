@@ -3,6 +3,8 @@ use std::{
     io::{self, stderr, Write},
 };
 
+use crate::backend::nameresolver::UnboundIndentifier;
+
 use super::{parser::ParseError, span::Spanned};
 
 fn report_unexpected_eof<'source>(error: &Spanned<'source, ParseError<'source>>) -> io::Result<()> {
@@ -66,9 +68,9 @@ impl<'source> Spanned<'source, ParseError<'source>> {
     }
 }
 
-impl<'source> Spanned<'source, &'source str> {
+impl<'source> Spanned<'source, UnboundIndentifier<'source>> {
     pub fn report(&self, source: &'source str) -> io::Result<()> {
-        let error = Spanned::new(format!("`{}` is not bound.", self.data), self.span);
+        let error = Spanned::new(format!("`{}` is not bound.", self.data.0), self.span);
         report(&error, source, "name resolution")
     }
 }

@@ -1,6 +1,6 @@
-use crate::frontend::span::Spanned;
+use crate::frontend::span::{HasSpan, Spanned};
 
-use super::ast::{Bound, Expression, Pattern, ResolvedExpression};
+use super::ast::{Bound, Expression, Pattern};
 
 pub struct NameResolver<'source> {
     locals: Vec<&'source str>,
@@ -14,26 +14,24 @@ impl<'source> NameResolver<'source> {
     pub fn resolve_names(
         &mut self,
         expr: Spanned<'source, Expression<'source>>,
-    ) -> Result<Spanned<'source, ResolvedExpression<'source>>, Spanned<'source, &'source str>> {
+    ) -> ResolutionResult<'source> {
         let resolved_expr = match expr.data {
-            Expression::Identifier(identifier) => {
+            Expression::Integer(_) | Expression::Float(_) | Expression::String(_) => expr.data,
+            Expression::Identifier(identifier, _) => {
                 let indice = self
                     .locals
                     .iter()
                     .rev()
                     .position(|local| local == &identifier)
-                    .ok_or(Spanned::new(identifier, expr.span))?;
-                ResolvedExpression::Identifier(identifier, Bound::Local(indice))
+                    .ok_or(Spanned::new(UnboundIndentifier(identifier), expr.span))?;
+                Expression::Identifier(identifier, Bound::Local(indice))
             }
-            Expression::Integer(integer) => ResolvedExpression::Integer(integer),
-            Expression::Float(float) => ResolvedExpression::Float(float),
-            Expression::String(string) => ResolvedExpression::String(string),
-            Expression::Binary { lhs, op, rhs } => ResolvedExpression::Binary {
+            Expression::Binary { lhs, op, rhs } => Expression::Binary {
                 lhs: Box::new(self.resolve_names(*lhs)?),
-                op, // TODO : Resolution of operators
+                op,
                 rhs: Box::new(self.resolve_names(*rhs)?),
             },
-            Expression::Application { expr, args } => ResolvedExpression::Application {
+            Expression::Application { expr, args } => Expression::Application {
                 expr: Box::new(self.resolve_names(*expr)?),
                 args: args
                     .into_iter()
@@ -50,7 +48,7 @@ impl<'source> NameResolver<'source> {
                 let body = self.resolve_names(*body)?;
                 self.locals.truncate(self.locals.len() - local_count);
 
-                ResolvedExpression::Let {
+                Expression::Let {
                     pattern,
                     expr: Box::new(expr),
                     body: Box::new(body),
@@ -64,7 +62,7 @@ impl<'source> NameResolver<'source> {
                 let body = self.resolve_names(*body)?;
                 self.locals.truncate(self.locals.len() - local_count);
 
-                ResolvedExpression::Lambda {
+                Expression::Lambda {
                     params,
                     body: Box::new(body),
                 }
@@ -84,3 +82,7 @@ impl<'source> NameResolver<'source> {
         }
     }
 }
+
+pub struct UnboundIndentifier<'source>(pub &'source str);
+type ResolutionResult<'a> =
+    Result<Spanned<'a, Expression<'a>>, Spanned<'a, UnboundIndentifier<'a>>>;

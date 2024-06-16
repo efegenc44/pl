@@ -26,7 +26,6 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
         Err(err) => return err.report(&file),
     };
 
-    ast.data.pretty_print();
     let resolved_ast = match NameResolver::new().resolve_names(ast) {
         Ok(resolved_ast) => resolved_ast,
         Err(err) => return err.report(&file),
@@ -60,7 +59,6 @@ fn start_repl() -> io::Result<()> {
                 continue;
             }
         };
-        ast.data.pretty_print();
 
         let resolved_ast = match NameResolver::new().resolve_names(ast) {
             Ok(resolved_ast) => resolved_ast,

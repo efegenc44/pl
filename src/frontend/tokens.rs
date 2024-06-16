@@ -53,6 +53,22 @@ impl<'source> Tokens<'source> {
         token
     }
 
+    fn double_char(
+        &mut self,
+        single: Token<'source>,
+        ch: char,
+        double: Token<'source>,
+    ) -> Token<'source> {
+        self.chars.next();
+        self.col += 1;
+        if self.chars.next_if(|(_, next)| next == &ch).is_some() {
+            self.col += 1;
+            double
+        } else {
+            single
+        }
+    }
+
     fn keyword_or_identifier(&mut self) -> Spanned<'source, Token<'source>> {
         let start_indice = self.current_indice();
         let start_position = self.current_position();
@@ -122,23 +138,19 @@ impl<'source> Tokens<'source> {
     }
 
     fn symbol(&mut self) -> Spanned<'source, Token<'source>> {
-        const PUNCTUATIONS: [char; 5] = ['(', ')', '"', '.', ','];
-
         let start_position = self.current_position();
         let token = match self.chars.peek().unwrap().1 {
             '(' => self.single_char(Token::OpeningParenthesis),
             ')' => self.single_char(Token::ClosingParenthesis),
             ',' => self.single_char(Token::Comma),
-            _ => {
-                let start_indice = self.current_indice();
-                self.continuously_advance(|ch| {
-                    !(ch.is_whitespace() || ch.is_alphanumeric() || PUNCTUATIONS.contains(ch))
-                });
-                let end_indice = self.current_indice();
-
-                let lexeme = &self.source[start_indice..end_indice];
-                Token::Operator(lexeme)
-            }
+            '=' => self.single_char(Token::Equals),
+            '+' => self.single_char(Token::Plus),
+            '*' => self.single_char(Token::Star),
+            '^' => self.single_char(Token::Carrot),
+            '<' => self.single_char(Token::Less),
+            '\\' => self.single_char(Token::Backslash),
+            '-' => self.double_char(Token::Minus, '>', Token::RightArrow),
+            _ => todo!("Unknown start of a token."),
         };
         let end_position = self.current_position();
 

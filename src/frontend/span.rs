@@ -61,6 +61,15 @@ impl<T: Display> Display for Spanned<'_, T> {
     }
 }
 
+pub trait HasSpan {
+    fn attach(self, span: Span) -> Spanned<Self>
+    where
+        Self: Sized,
+    {
+        Spanned::new(self, span)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilePosition {
     pub row: usize,
