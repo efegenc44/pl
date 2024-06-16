@@ -9,6 +9,7 @@ pub enum Token<'source> {
     OpeningParenthesis,
     ClosingParenthesis,
     Comma,
+    Dot,
     Equals,
     Backslash,
     Minus,
@@ -19,6 +20,8 @@ pub enum Token<'source> {
     RightArrow,
     KeywordLet,
     KeywordIn,
+    KeywordFunc,
+    KeywordImport,
 }
 
 impl Display for Token<'_> {
@@ -33,6 +36,7 @@ impl Display for Token<'_> {
             Self::OpeningParenthesis => write!(f, "("),
             Self::ClosingParenthesis => write!(f, ")"),
             Self::Comma => write!(f, ","),
+            Self::Dot => write!(f, "."),
             Self::Equals => write!(f, "="),
             Self::Minus => write!(f, "-"),
             Self::Plus => write!(f, "+"),
@@ -43,6 +47,8 @@ impl Display for Token<'_> {
             Self::RightArrow => write!(f, "->"),
             Self::KeywordLet => write!(f, "let"),
             Self::KeywordIn => write!(f, "in"),
+            Self::KeywordFunc => write!(f, "func"),
+            Self::KeywordImport => write!(f, "import"),
         }
     }
 }

@@ -1,1 +1,2 @@
-let a = 4 in a * a
+func wow("Hello") = add(3, 4)
+func add(x, y) = x + y

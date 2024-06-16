@@ -1,7 +1,7 @@
 use std::{fmt::Display, iter::Peekable};
 
 use crate::{
-    backend::ast::{Bound, Expression, Operator, Pattern},
+    backend::ast::{Bound, Declaration, Expression, Operator, Pattern},
     frontend::token::Token,
 };
 
@@ -52,6 +52,18 @@ impl<'source> Parser<'source> {
         } else {
             Err(ParseError::UnexpectedToken(spanned_token.data).attach(spanned_token.span))
         }
+    }
+
+    fn expect_identifier(&mut self) -> ParseResult<'source, Spanned<'source, &'source str>> {
+        let Some(spanned_token) = self.tokens.next() else {
+            return self.unexpected_eof()
+        };
+
+        let Token::Identifier(identifier) = spanned_token.data else {
+            return Err(ParseError::UnexpectedToken(spanned_token.data).attach(spanned_token.span))
+        };
+
+        Ok(Spanned::new(identifier, spanned_token.span))
     }
 
     fn peek_is(&mut self, expected: Token) -> bool {
@@ -244,6 +256,53 @@ impl<'source> Parser<'source> {
 
     pub fn expression(&mut self) -> ParseResult<'source, Spanned<'source, Expression<'source>>> {
         self.binary(0)
+    }
+
+    fn func(&mut self) -> ParseResult<'source, Spanned<'source, Declaration<'source>>> {
+        let start = self.expect(Token::KeywordFunc)?;
+        let name = self.expect_identifier()?;
+        self.expect(Token::OpeningParenthesis)?;
+        let params = self.comma_seperated_until(Self::pattern, Token::ClosingParenthesis)?;
+        self.expect(Token::ClosingParenthesis)?;
+        self.expect(Token::Equals)?;
+        let body = self.expression()?;
+        let end = body.span;
+
+        Ok(Declaration::Function { name, params, body }.attach(start.extend(end)))
+    }
+
+    fn import(&mut self) -> ParseResult<'source, Spanned<'source, Declaration<'source>>> {
+        let start = self.expect(Token::KeywordImport)?;
+        let mut parts = vec![];
+        parts.push(self.expect_identifier()?);
+        while self.tokens.next_if(|next| next.data == Token::Dot).is_some() {
+            parts.push(self.expect_identifier()?);
+        }
+        let end = parts.last().unwrap().span;
+
+        Ok(Declaration::Import { parts }.attach(start.extend(end)))
+    }
+
+    fn declaration(&mut self) -> ParseResult<'source, Spanned<'source, Declaration<'source>>> {
+        let Some(peeked) = self.tokens.peek() else {
+            return self.unexpected_eof()
+        };
+
+        let span = peeked.span;
+        match peeked.data {
+            Token::KeywordFunc => self.func(),
+            Token::KeywordImport => self.import(),
+            unexpected => Err(ParseError::UnexpectedToken(unexpected).attach(span)),
+        }
+    }
+
+    pub fn program(&mut self) -> Result<Vec<Spanned<'source, Declaration<'source>>>, Spanned<'source, ParseError<'source>>> {
+        let mut program = vec![];
+        while self.tokens.peek().is_some() {
+            program.push(self.declaration()?);
+        }
+
+        Ok(program)
     }
 }
 

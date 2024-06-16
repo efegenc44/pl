@@ -79,6 +79,8 @@ impl<'source> Tokens<'source> {
         let token = match &self.source[start_indice..end_indice] {
             "let" => Token::KeywordLet,
             "in" => Token::KeywordIn,
+            "func" => Token::KeywordFunc,
+            "import" => Token::KeywordImport,
             identifier => Token::Identifier(identifier),
         };
         Spanned::new(
@@ -126,7 +128,7 @@ impl<'source> Tokens<'source> {
         let Some((_, '"')) = self.chars.next() else {
             todo!("Unterminated string literal.")
         };
-        self.row += 1;
+        self.col += 1;
         let end_position = self.current_position();
         let end_indice = self.current_indice();
 
@@ -143,6 +145,7 @@ impl<'source> Tokens<'source> {
             '(' => self.single_char(Token::OpeningParenthesis),
             ')' => self.single_char(Token::ClosingParenthesis),
             ',' => self.single_char(Token::Comma),
+            '.' => self.single_char(Token::Dot),
             '=' => self.single_char(Token::Equals),
             '+' => self.single_char(Token::Plus),
             '*' => self.single_char(Token::Star),

@@ -25,7 +25,7 @@ impl Display for Operator {
 
 #[derive(Debug)]
 pub enum Expression<'source> {
-    Identifier(&'source str, Bound),
+    Identifier(&'source str, Bound<'source>),
     Integer(&'source str),
     Float(&'source str),
     String(&'source str),
@@ -112,15 +112,17 @@ impl<'source> Expression<'source> {
 impl HasSpan for Expression<'_> {}
 
 #[derive(Debug)]
-pub enum Bound {
+pub enum Bound<'source> {
     Local(usize),
+    Global(&'source str),
     None,
 }
 
-impl Display for Bound {
+impl Display for Bound<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Local(id) => write!(f, "Local {id}"),
+            Self::Global(name) => write!(f, "Global {name}"),
             Self::None => write!(f, "None"),
         }
     }
@@ -146,3 +148,49 @@ impl<'source> Pattern<'source> {
 }
 
 impl HasSpan for Pattern<'_> {}
+
+pub enum Declaration<'source> {
+    Function {
+        name: Spanned<'source, &'source str>,
+        params: Vec<Spanned<'source, Pattern<'source>>>,
+        body: Spanned<'source, Expression<'source>>
+    },
+    Import {
+        parts: Vec<Spanned<'source, &'source str>>
+    }
+}
+
+impl Declaration<'_> {
+    pub fn pretty_print(&self) {
+        self._pretty_print(0)
+    }
+
+    fn _pretty_print(&self, depth: usize) {
+        fn indented<T: Display>(msg: T, depth: usize) {
+            print!("{:1$}{msg}", "", depth * 2);
+        }
+
+        match self {
+            Self::Function { name, params, body: expr } => {
+                println!("Func:");
+                indented(format!("name: {}\n", name.data), depth + 1);
+                indented("params:\n", depth + 1);
+                for param in params {
+                    indented("", depth + 2);
+                    param.data._pretty_print(depth + 2);
+                }
+                indented("expr: ", depth + 1);
+                expr.data._pretty_print(depth + 1);
+            }
+            Self::Import { parts } => {
+                println!("Import:");
+                indented("parts:\n", depth + 1);
+                for part in parts {
+                    indented(format!("{part}"), depth + 2);
+                }
+            }
+        }
+    }
+}
+
+impl HasSpan for Declaration<'_> {}
