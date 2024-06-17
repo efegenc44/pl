@@ -3,7 +3,7 @@ use std::{
     io::{self, stderr, Write},
 };
 
-use crate::backend::nameresolver::UnboundIndentifier;
+use crate::backend::nameresolver::ResolutionError;
 
 use super::{parser::ParseError, span::Spanned};
 
@@ -68,9 +68,8 @@ impl<'source> Spanned<'source, ParseError<'source>> {
     }
 }
 
-impl<'source> Spanned<'source, UnboundIndentifier<'source>> {
+impl<'source> Spanned<'source, ResolutionError<'source>> {
     pub fn report(&self, source: &'source str) -> io::Result<()> {
-        let error = Spanned::new(format!("`{}` is not bound.", self.data.0), self.span);
-        report(&error, source, "name resolution")
+        report(self, source, "name resolution")
     }
 }

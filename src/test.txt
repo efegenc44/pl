@@ -1,2 +1,4 @@
-func wow("Hello") = add(3, 4)
+import src.test2
+
+func wow("Hello") = test2.abs
 func add(x, y) = x + y

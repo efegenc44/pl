@@ -1,4 +1,4 @@
-use std::{fmt::Display, usize};
+use std::{collections::HashMap, fmt::Display, usize};
 
 use crate::frontend::span::{HasSpan, Spanned};
 
@@ -46,6 +46,10 @@ pub enum Expression<'source> {
     Lambda {
         params: Vec<Spanned<'source, Pattern<'source>>>,
         body: Box<Spanned<'source, Expression<'source>>>,
+    },
+    Access {
+        module_name: Spanned<'source, &'source str>,
+        name: Spanned<'source, &'source str>,
     },
 }
 
@@ -105,6 +109,14 @@ impl<'source> Expression<'source> {
                 indented("body: ", depth + 1);
                 body.data._pretty_print(depth + 1);
             }
+            Self::Access {
+                module_name: module,
+                name,
+            } => {
+                println!("Access:");
+                indented(format!("module: {}\n", module.data), depth + 1);
+                indented(format!("name: {}\n", name.data), depth + 1);
+            }
         }
     }
 }
@@ -153,11 +165,11 @@ pub enum Declaration<'source> {
     Function {
         name: Spanned<'source, &'source str>,
         params: Vec<Spanned<'source, Pattern<'source>>>,
-        body: Spanned<'source, Expression<'source>>
+        body: Spanned<'source, Expression<'source>>,
     },
     Import {
-        parts: Vec<Spanned<'source, &'source str>>
-    }
+        parts: Vec<Spanned<'source, &'source str>>,
+    },
 }
 
 impl Declaration<'_> {
@@ -171,7 +183,11 @@ impl Declaration<'_> {
         }
 
         match self {
-            Self::Function { name, params, body: expr } => {
+            Self::Function {
+                name,
+                params,
+                body: expr,
+            } => {
                 println!("Func:");
                 indented(format!("name: {}\n", name.data), depth + 1);
                 indented("params:\n", depth + 1);
@@ -186,7 +202,7 @@ impl Declaration<'_> {
                 println!("Import:");
                 indented("parts:\n", depth + 1);
                 for part in parts {
-                    indented(format!("{part}"), depth + 2);
+                    indented(format!("{}\n", part.data), depth + 2);
                 }
             }
         }
@@ -194,3 +210,17 @@ impl Declaration<'_> {
 }
 
 impl HasSpan for Declaration<'_> {}
+
+pub struct Module<'source> {
+    pub decls: HashMap<&'source str, Spanned<'source, Declaration<'source>>>,
+    pub imports: HashMap<&'source str, Module<'source>>,
+}
+
+impl<'source> Module<'source> {
+    pub fn new(
+        decls: HashMap<&'source str, Spanned<'source, Declaration<'source>>>,
+        imports: HashMap<&'source str, Module<'source>>,
+    ) -> Self {
+        Self { decls, imports }
+    }
+}

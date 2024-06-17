@@ -21,18 +21,24 @@ fn main() -> io::Result<()> {
 
 fn start_from_file(file_path: &str) -> io::Result<()> {
     let file = read_to_string(file_path)?;
-    let program = match Parser::new(Tokens::new(file_path, &file)).program() {
+    let module = match Parser::new(Tokens::new(file_path, &file)).module() {
         Ok(program) => program,
-        Err(err) => return err.report(&file),
+        Err(err) => {
+            let file = read_to_string(err.span.source_name)?;
+            return err.report(&file);
+        }
     };
 
-    let resolved_program = match NameResolver::new().resolve_names_in_program(program) {
+    let resolved_program = match NameResolver::new().resolve_names_in_module(module) {
         Ok(resolved_program) => resolved_program,
-        Err(err) => return err.report(&file),
+        Err(err) => {
+            let file = read_to_string(err.span.source_name)?;
+            return err.report(&file);
+        }
     };
 
-    for decl in resolved_program {
-        decl.data.pretty_print();
+    for decl in resolved_program.decls {
+        decl.1.data.pretty_print();
     }
 
     Ok(())

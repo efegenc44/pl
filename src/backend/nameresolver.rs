@@ -1,17 +1,25 @@
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 
 use crate::frontend::span::{HasSpan, Spanned};
 
-use super::ast::{Bound, Declaration, Expression, Pattern};
+use super::ast::{Bound, Declaration, Expression, Module, Pattern};
 
 pub struct NameResolver<'source> {
     locals: Vec<&'source str>,
     globals: HashSet<&'source str>,
+    imports: HashMap<&'source str, Module<'source>>,
 }
 
 impl<'source> NameResolver<'source> {
     pub fn new() -> Self {
-        Self { locals: Vec::new(), globals: HashSet::new() }
+        Self {
+            locals: Vec::new(),
+            globals: HashSet::new(),
+            imports: HashMap::new(),
+        }
     }
 
     pub fn resolve_names_in_expr(
@@ -29,8 +37,10 @@ impl<'source> NameResolver<'source> {
                 {
                     Expression::Identifier(identifier, Bound::Local(indice))
                 } else {
-                    let name = self.globals.get(identifier)
-                        .ok_or(Spanned::new(UnboundIndentifier(identifier), expr.span))?;
+                    let name = self
+                        .globals
+                        .get(identifier)
+                        .ok_or(ResolutionError::UnboundIdentifier(identifier).attach(expr.span))?;
 
                     Expression::Identifier(identifier, Bound::Global(name))
                 }
@@ -76,6 +86,16 @@ impl<'source> NameResolver<'source> {
                     body: Box::new(body),
                 }
             }
+            Expression::Access { module_name, name } => {
+                let Some(module) = self.imports.get(module_name.data) else {
+                    return Err(ResolutionError::NonExistantModule(module_name.data).attach(module_name.span))
+                };
+                let Some(_) = module.decls.get(name.data) else {
+                    return Err(ResolutionError::UnboundInModule { module_name: module_name.data, name: name.data }.attach(name.span))
+                };
+
+                Expression::Access { module_name, name }
+            }
         };
 
         Ok(resolved_expr.attach(expr.span))
@@ -83,7 +103,7 @@ impl<'source> NameResolver<'source> {
 
     fn resolve_names_in_declaration(
         &mut self,
-        decl: Spanned<'source, Declaration<'source>>
+        decl: Spanned<'source, Declaration<'source>>,
     ) -> ResolutionResult<'source, Declaration<'source>> {
         let resolved_decl = match decl.data {
             Declaration::Function { name, params, body } => {
@@ -95,37 +115,52 @@ impl<'source> NameResolver<'source> {
                 self.locals.truncate(self.locals.len() - local_count);
 
                 Declaration::Function { name, params, body }
-            },
-            Declaration::Import { parts: _ } => todo!(),
+            }
+            Declaration::Import { parts: _ } => decl.data,
         };
 
         Ok(resolved_decl.attach(decl.span))
     }
 
-    fn collect_declarations(&mut self, decls: &Vec<Spanned<'source, Declaration<'source>>>) {
-        for decl in decls {
+    fn collect_declarations(&mut self, module: &Module<'source>) {
+        for decl in module.decls.values() {
+            #[allow(clippy::single_match)]
             match &decl.data {
                 Declaration::Function { name, .. } => {
                     // TODO: Handle duplicate function declarations
                     self.globals.insert(name.data);
-                },
-                _ => ()
+                }
+                _ => (),
             }
         }
     }
 
-    pub fn resolve_names_in_program(
+    fn handle_imports(
         &mut self,
-        decls: Vec<Spanned<'source, Declaration<'source>>>,
-    ) -> Result<Vec<Spanned<'source, Declaration<'source>>>, Spanned<'source, UnboundIndentifier<'source>>> {
-        self.collect_declarations(&decls);
+        imports: HashMap<&'source str, Module<'source>>,
+    ) -> Result<(), Spanned<'source, ResolutionError<'source>>> {
+        for (name, module) in imports {
+            let resolved_module = NameResolver::new().resolve_names_in_module(module)?;
+            self.imports.insert(name, resolved_module);
+        }
 
-        let resolved_program = decls
-            .into_iter()
-            .map(|decl| self.resolve_names_in_declaration(decl))
-            .collect::<Result<Vec<_>, _>>()?;
+        Ok(())
+    }
 
-        Ok(resolved_program)
+    pub fn resolve_names_in_module(
+        mut self,
+        module: Module<'source>,
+    ) -> Result<Module<'source>, Spanned<'source, ResolutionError<'source>>> {
+        self.collect_declarations(&module);
+        self.handle_imports(module.imports)?;
+
+        let mut resolved_module = HashMap::new();
+        for (name, decl) in module.decls {
+            let resolved_decl = self.resolve_names_in_declaration(decl)?;
+            resolved_module.insert(name, resolved_decl);
+        }
+
+        Ok(Module::new(resolved_module, self.imports))
     }
 
     fn push_names_in_pattern(&mut self, pattern: &Spanned<'source, Pattern<'source>>) -> usize {
@@ -139,6 +174,27 @@ impl<'source> NameResolver<'source> {
     }
 }
 
-pub struct UnboundIndentifier<'source>(pub &'source str);
-type ResolutionResult<'a, T> =
-    Result<Spanned<'a, T>, Spanned<'a, UnboundIndentifier<'a>>>;
+pub enum ResolutionError<'source> {
+    UnboundIdentifier(&'source str),
+    NonExistantModule(&'source str),
+    UnboundInModule {
+        module_name: &'source str,
+        name: &'source str,
+    },
+}
+
+impl Display for ResolutionError<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnboundIdentifier(identifier) => write!(f, "`{identifier}` is not bound."),
+            Self::NonExistantModule(module) => write!(f, "Module `{module}` does not exist."),
+            Self::UnboundInModule { module_name, name } => {
+                write!(f, "`{name}` is not bound in module `{module_name}`.")
+            }
+        }
+    }
+}
+
+impl HasSpan for ResolutionError<'_> {}
+
+type ResolutionResult<'a, T> = Result<Spanned<'a, T>, Spanned<'a, ResolutionError<'a>>>;

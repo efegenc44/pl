@@ -1,7 +1,7 @@
-use std::{fmt::Display, iter::Peekable};
+use std::{collections::HashMap, fmt::Display, fs::read_to_string, iter::Peekable};
 
 use crate::{
-    backend::ast::{Bound, Declaration, Expression, Operator, Pattern},
+    backend::ast::{Bound, Declaration, Expression, Module, Operator, Pattern},
     frontend::token::Token,
 };
 
@@ -28,6 +28,7 @@ const OPERATORS: [(Token, Associativity, usize); 5] = [
 pub struct Parser<'source> {
     source_name: &'source str,
     tokens: Peekable<Tokens<'source>>,
+    imports: HashMap<&'source str, Module<'source>>,
 }
 
 impl<'source> Parser<'source> {
@@ -35,6 +36,7 @@ impl<'source> Parser<'source> {
         Self {
             source_name: tokens.source_name(),
             tokens: tokens.peekable(),
+            imports: HashMap::new(),
         }
     }
 
@@ -178,8 +180,20 @@ impl<'source> Parser<'source> {
         let span = peeked.span;
         match peeked.data {
             Token::Identifier(identifier) => {
-                let expr = Expression::Identifier(identifier, Bound::None).attach(span);
+                let mut expr = Expression::Identifier(identifier, Bound::None).attach(span);
                 self.tokens.next();
+                if let Some(Token::Dot) = self.tokens.peek().map(|peeked| peeked.data) {
+                    self.tokens.next();
+                    let name = self.expect_identifier()?;
+                    let end = name.span;
+
+                    expr = Expression::Access {
+                        module_name: Spanned::new(identifier, span),
+                        name,
+                    }
+                    .attach(span.extend(end))
+                }
+
                 Ok(expr)
             }
             Token::Integer(integer) => self.literal(Expression::Integer, integer, span),
@@ -275,10 +289,33 @@ impl<'source> Parser<'source> {
         let start = self.expect(Token::KeywordImport)?;
         let mut parts = vec![];
         parts.push(self.expect_identifier()?);
-        while self.tokens.next_if(|next| next.data == Token::Dot).is_some() {
+        while self
+            .tokens
+            .next_if(|next| next.data == Token::Dot)
+            .is_some()
+        {
             parts.push(self.expect_identifier()?);
         }
+        let module_name = parts.last().unwrap().data;
         let end = parts.last().unwrap().span;
+
+        let module_path = String::from(".")
+            + &parts
+                .iter()
+                .map(|part| part.data)
+                .fold(String::new(), |x, y| x + "\\" + y)
+            + ".txt";
+
+        // TODO: Remove unwrap.
+        println!("{}", &module_path);
+        let module_file = read_to_string(&module_path).unwrap();
+        let module = Parser::new(Tokens::new(
+            Box::leak(module_path.into_boxed_str()),
+            Box::leak(module_file.into_boxed_str()),
+        ))
+        .module()?;
+
+        self.imports.insert(module_name, module);
 
         Ok(Declaration::Import { parts }.attach(start.extend(end)))
     }
@@ -296,17 +333,23 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub fn program(&mut self) -> Result<Vec<Spanned<'source, Declaration<'source>>>, Spanned<'source, ParseError<'source>>> {
-        let mut program = vec![];
+    pub fn module(mut self) -> Result<Module<'source>, Spanned<'source, ParseError<'source>>> {
+        let mut module = HashMap::new();
         while self.tokens.peek().is_some() {
-            program.push(self.declaration()?);
+            let decl = self.declaration()?;
+            match &decl.data {
+                Declaration::Function { name, .. } => {
+                    module.insert(name.data, decl);
+                }
+                Declaration::Import { .. } => (),
+            };
         }
 
-        Ok(program)
+        Ok(Module::new(module, self.imports))
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ParseError<'source> {
     UnexpectedEOF,
     UnexpectedToken(Token<'source>),
