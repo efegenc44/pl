@@ -1,6 +1,9 @@
 use std::{collections::HashMap, fmt::Display, usize};
 
-use crate::frontend::span::{HasSpan, Spanned};
+use crate::frontend::{
+    span::{HasSpan, Spanned},
+    token::Symbol,
+};
 
 #[derive(Debug)]
 pub enum Operator {
@@ -24,36 +27,36 @@ impl Display for Operator {
 }
 
 #[derive(Debug)]
-pub enum Expression<'source> {
-    Identifier(&'source str, Bound<'source>),
-    Integer(&'source str),
-    Float(&'source str),
-    String(&'source str),
+pub enum Expression {
+    Identifier(Symbol, Bound),
+    Integer(Symbol),
+    Float(Symbol),
+    String(Symbol),
     Binary {
-        lhs: Box<Spanned<'source, Expression<'source>>>,
+        lhs: Box<Spanned<Expression>>,
         op: Operator,
-        rhs: Box<Spanned<'source, Expression<'source>>>,
+        rhs: Box<Spanned<Expression>>,
     },
     Application {
-        expr: Box<Spanned<'source, Expression<'source>>>,
-        args: Vec<Spanned<'source, Expression<'source>>>,
+        expr: Box<Spanned<Expression>>,
+        args: Vec<Spanned<Expression>>,
     },
     Let {
-        pattern: Spanned<'source, Pattern<'source>>,
-        expr: Box<Spanned<'source, Expression<'source>>>,
-        body: Box<Spanned<'source, Expression<'source>>>,
+        pattern: Spanned<Pattern>,
+        expr: Box<Spanned<Expression>>,
+        body: Box<Spanned<Expression>>,
     },
     Lambda {
-        params: Vec<Spanned<'source, Pattern<'source>>>,
-        body: Box<Spanned<'source, Expression<'source>>>,
+        params: Vec<Spanned<Pattern>>,
+        body: Box<Spanned<Expression>>,
     },
     Access {
-        module_name: Spanned<'source, &'source str>,
-        name: Spanned<'source, &'source str>,
+        module_name: Spanned<Symbol>,
+        name: Spanned<Symbol>,
     },
 }
 
-impl<'source> Expression<'source> {
+impl Expression {
     pub fn pretty_print(&self) {
         self._pretty_print(0);
     }
@@ -121,16 +124,16 @@ impl<'source> Expression<'source> {
     }
 }
 
-impl HasSpan for Expression<'_> {}
+impl HasSpan for Expression {}
 
 #[derive(Debug)]
-pub enum Bound<'source> {
+pub enum Bound {
     Local(usize),
-    Global(&'source str),
+    Global(Symbol),
     None,
 }
 
-impl Display for Bound<'_> {
+impl Display for Bound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Local(id) => write!(f, "Local {id}"),
@@ -141,14 +144,14 @@ impl Display for Bound<'_> {
 }
 
 #[derive(Debug)]
-pub enum Pattern<'source> {
-    Any(&'source str),
-    String(&'source str),
-    Integer(&'source str),
-    Float(&'source str),
+pub enum Pattern {
+    Any(Symbol),
+    String(Symbol),
+    Integer(Symbol),
+    Float(Symbol),
 }
 
-impl<'source> Pattern<'source> {
+impl Pattern {
     fn _pretty_print(&self, _depth: usize) {
         match self {
             Self::Any(literal)
@@ -159,20 +162,20 @@ impl<'source> Pattern<'source> {
     }
 }
 
-impl HasSpan for Pattern<'_> {}
+impl HasSpan for Pattern {}
 
-pub enum Declaration<'source> {
+pub enum Declaration {
     Function {
-        name: Spanned<'source, &'source str>,
-        params: Vec<Spanned<'source, Pattern<'source>>>,
-        body: Spanned<'source, Expression<'source>>,
+        name: Spanned<Symbol>,
+        params: Vec<Spanned<Pattern>>,
+        body: Spanned<Expression>,
     },
     Import {
-        parts: Vec<Spanned<'source, &'source str>>,
+        parts: Vec<Spanned<Symbol>>,
     },
 }
 
-impl Declaration<'_> {
+impl Declaration {
     pub fn pretty_print(&self) {
         self._pretty_print(0)
     }
@@ -209,17 +212,17 @@ impl Declaration<'_> {
     }
 }
 
-impl HasSpan for Declaration<'_> {}
+impl HasSpan for Declaration {}
 
-pub struct Module<'source> {
-    pub decls: HashMap<&'source str, Spanned<'source, Declaration<'source>>>,
-    pub imports: HashMap<&'source str, Module<'source>>,
+pub struct Module {
+    pub decls: HashMap<Symbol, Spanned<Declaration>>,
+    pub imports: HashMap<Symbol, Module>,
 }
 
-impl<'source> Module<'source> {
+impl Module {
     pub fn new(
-        decls: HashMap<&'source str, Spanned<'source, Declaration<'source>>>,
-        imports: HashMap<&'source str, Module<'source>>,
+        decls: HashMap<Symbol, Spanned<Declaration>>,
+        imports: HashMap<Symbol, Module>,
     ) -> Self {
         Self { decls, imports }
     }

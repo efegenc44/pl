@@ -1,5 +1,6 @@
 use std::{
     fmt::Display,
+    fs::read_to_string,
     io::{self, stderr, Write},
 };
 
@@ -7,23 +8,23 @@ use crate::backend::nameresolver::ResolutionError;
 
 use super::{parser::ParseError, span::Spanned};
 
-fn report_unexpected_eof<'source>(error: &Spanned<'source, ParseError<'source>>) -> io::Result<()> {
+fn report_unexpected_eof(error: &Spanned<ParseError>, source_name: &str) -> io::Result<()> {
     let mut stderr = stderr();
     writeln!(stderr)?;
-    writeln!(
-        stderr,
-        "  Error | [{}] (at parsing)",
-        error.span.source_name
-    )?;
+    writeln!(stderr, "  Error | [{source_name}] (at parsing)",)?;
     writeln!(stderr, "        |")?;
     writeln!(stderr, "        | {}\n", error.data)
 }
 
-fn report<E: Display>(error: &Spanned<E>, source: &str, stage: &str) -> io::Result<()> {
+fn report<E: Display>(
+    error: &Spanned<E>,
+    source_name: &str,
+    source: &str,
+    stage: &str,
+) -> io::Result<()> {
     let mut lines = source.lines();
     let mut stderr = stderr();
 
-    let source_name = error.span.source_name;
     let row_start = error.span.start.row;
     let row_end = error.span.end.row;
     let col_start = error.span.start.col;
@@ -58,18 +59,21 @@ fn report<E: Display>(error: &Spanned<E>, source: &str, stage: &str) -> io::Resu
     writeln!(stderr, "        | {}\n", error.data)
 }
 
-impl<'source> Spanned<'source, ParseError<'source>> {
-    pub fn report(&self, source: &'source str) -> io::Result<()> {
-        if matches!(self.data, ParseError::UnexpectedEOF) {
-            report_unexpected_eof(self)
-        } else {
-            report(self, source, "parsing")
+impl Spanned<ParseError> {
+    pub fn report(&self, source_name: &str, source: &str) -> io::Result<()> {
+        match &self.data {
+            ParseError::UnexpectedEOF => report_unexpected_eof(self, source_name),
+            ParseError::ImportError { import_path, error } => {
+                report(self, source_name, source, "parsing")?;
+                error.report(import_path, &read_to_string(import_path.as_ref())?)
+            }
+            _ => report(self, source_name, source, "parsing"),
         }
     }
 }
 
-impl<'source> Spanned<'source, ResolutionError<'source>> {
-    pub fn report(&self, source: &'source str) -> io::Result<()> {
-        report(self, source, "name resolution")
+impl Spanned<ResolutionError> {
+    pub fn report(&self, source_name: &str, source: &str) -> io::Result<()> {
+        report(self, source_name, source, "name resolution")
     }
 }

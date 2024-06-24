@@ -1,11 +1,13 @@
 use std::fmt::Display;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Token<'source> {
-    Identifier(&'source str),
-    Integer(&'source str),
-    Float(&'source str),
-    String(&'source str),
+pub type Symbol = Box<str>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Token {
+    Identifier(Symbol),
+    Integer(Symbol),
+    Float(Symbol),
+    String(Symbol),
     OpeningParenthesis,
     ClosingParenthesis,
     Comma,
@@ -24,7 +26,7 @@ pub enum Token<'source> {
     KeywordImport,
 }
 
-impl Display for Token<'_> {
+impl Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Identifier(lexeme)

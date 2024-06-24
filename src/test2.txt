@@ -1,1 +1,1 @@
-func sub(x, y) = x - a
+func sub(x, y) = x -

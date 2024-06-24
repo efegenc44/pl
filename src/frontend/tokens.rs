@@ -8,7 +8,6 @@ use super::{
 };
 
 pub struct Tokens<'source> {
-    source_name: &'source str,
     source: &'source str,
     chars: Peekable<CharIndices<'source>>,
     row: usize,
@@ -16,9 +15,8 @@ pub struct Tokens<'source> {
 }
 
 impl<'source> Tokens<'source> {
-    pub fn new(source_name: &'source str, source: &'source str) -> Self {
+    pub fn new(source: &'source str) -> Self {
         Self {
-            source_name,
             source,
             chars: source.char_indices().peekable(),
             row: 1,
@@ -47,18 +45,13 @@ impl<'source> Tokens<'source> {
         }
     }
 
-    fn single_char(&mut self, token: Token<'source>) -> Token<'source> {
+    fn single_char(&mut self, token: Token) -> Token {
         self.chars.next();
         self.col += 1;
         token
     }
 
-    fn double_char(
-        &mut self,
-        single: Token<'source>,
-        ch: char,
-        double: Token<'source>,
-    ) -> Token<'source> {
+    fn double_char(&mut self, single: Token, ch: char, double: Token) -> Token {
         self.chars.next();
         self.col += 1;
         if self.chars.next_if(|(_, next)| next == &ch).is_some() {
@@ -69,7 +62,7 @@ impl<'source> Tokens<'source> {
         }
     }
 
-    fn keyword_or_identifier(&mut self) -> Spanned<'source, Token<'source>> {
+    fn keyword_or_identifier(&mut self) -> Spanned<Token> {
         let start_indice = self.current_indice();
         let start_position = self.current_position();
         self.continuously_advance(|ch| ch.is_alphanumeric() || ['_', '\''].contains(ch));
@@ -81,15 +74,12 @@ impl<'source> Tokens<'source> {
             "in" => Token::KeywordIn,
             "func" => Token::KeywordFunc,
             "import" => Token::KeywordImport,
-            identifier => Token::Identifier(identifier),
+            identifier => Token::Identifier(identifier.into()),
         };
-        Spanned::new(
-            token,
-            Span::new(self.source_name, start_position, end_position),
-        )
+        Spanned::new(token, Span::new(start_position, end_position))
     }
 
-    fn numeric(&mut self) -> Spanned<'source, Token<'source>> {
+    fn numeric(&mut self) -> Spanned<Token> {
         let start_indice = self.current_indice();
         let start_position = self.current_position();
         self.continuously_advance(|ch| ch.is_ascii_digit() || ch == &'_');
@@ -104,14 +94,11 @@ impl<'source> Tokens<'source> {
         let end_position = self.current_position();
         let end_indice = self.current_indice();
 
-        let lexeme = &self.source[start_indice..end_indice];
-        Spanned::new(
-            constructor(lexeme),
-            Span::new(self.source_name, start_position, end_position),
-        )
+        let lexeme = self.source[start_indice..end_indice].into();
+        Spanned::new(constructor(lexeme), Span::new(start_position, end_position))
     }
 
-    fn string(&mut self) -> Spanned<'source, Token<'source>> {
+    fn string(&mut self) -> Spanned<Token> {
         let start_indice = self.current_indice();
         let start_position = self.current_position();
         self.chars.next(); // Skip the first '"'.
@@ -134,12 +121,12 @@ impl<'source> Tokens<'source> {
 
         let lexeme = &self.source[start_indice..end_indice];
         Spanned::new(
-            Token::String(lexeme),
-            Span::new(self.source_name, start_position, end_position),
+            Token::String(lexeme.into()),
+            Span::new(start_position, end_position),
         )
     }
 
-    fn symbol(&mut self) -> Spanned<'source, Token<'source>> {
+    fn symbol(&mut self) -> Spanned<Token> {
         let start_position = self.current_position();
         let token = match self.chars.peek().unwrap().1 {
             '(' => self.single_char(Token::OpeningParenthesis),
@@ -157,19 +144,12 @@ impl<'source> Tokens<'source> {
         };
         let end_position = self.current_position();
 
-        Spanned::new(
-            token,
-            Span::new(self.source_name, start_position, end_position),
-        )
-    }
-
-    pub fn source_name(&self) -> &'source str {
-        self.source_name
+        Spanned::new(token, Span::new(start_position, end_position))
     }
 }
 
-impl<'source> Iterator for Tokens<'source> {
-    type Item = Spanned<'source, Token<'source>>;
+impl Iterator for Tokens<'_> {
+    type Item = Spanned<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // Skip whitespaces.

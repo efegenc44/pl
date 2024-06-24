@@ -3,17 +3,20 @@ use std::{
     fmt::Display,
 };
 
-use crate::frontend::span::{HasSpan, Spanned};
+use crate::frontend::{
+    span::{HasSpan, Spanned},
+    token::Symbol,
+};
 
 use super::ast::{Bound, Declaration, Expression, Module, Pattern};
 
-pub struct NameResolver<'source> {
-    locals: Vec<&'source str>,
-    globals: HashSet<&'source str>,
-    imports: HashMap<&'source str, Module<'source>>,
+pub struct NameResolver {
+    locals: Vec<Symbol>,
+    globals: HashSet<Symbol>,
+    imports: HashMap<Symbol, Module>,
 }
 
-impl<'source> NameResolver<'source> {
+impl NameResolver {
     pub fn new() -> Self {
         Self {
             locals: Vec::new(),
@@ -24,8 +27,8 @@ impl<'source> NameResolver<'source> {
 
     pub fn resolve_names_in_expr(
         &mut self,
-        expr: Spanned<'source, Expression<'source>>,
-    ) -> ResolutionResult<'source, Expression<'source>> {
+        expr: Spanned<Expression>,
+    ) -> ResolutionResult<Expression> {
         let resolved_expr = match expr.data {
             Expression::Integer(_) | Expression::Float(_) | Expression::String(_) => expr.data,
             Expression::Identifier(identifier, _) => {
@@ -37,12 +40,10 @@ impl<'source> NameResolver<'source> {
                 {
                     Expression::Identifier(identifier, Bound::Local(indice))
                 } else {
-                    let name = self
-                        .globals
-                        .get(identifier)
-                        .ok_or(ResolutionError::UnboundIdentifier(identifier).attach(expr.span))?;
-
-                    Expression::Identifier(identifier, Bound::Global(name))
+                    let Some(name) = self.globals.get(&identifier) else {
+                        return Err(ResolutionError::UnboundIdentifier(identifier).attach(expr.span))
+                    };
+                    Expression::Identifier(identifier, Bound::Global(name.clone()))
                 }
             }
             Expression::Binary { lhs, op, rhs } => Expression::Binary {
@@ -87,10 +88,10 @@ impl<'source> NameResolver<'source> {
                 }
             }
             Expression::Access { module_name, name } => {
-                let Some(module) = self.imports.get(module_name.data) else {
+                let Some(module) = self.imports.get(&module_name.data) else {
                     return Err(ResolutionError::NonExistantModule(module_name.data).attach(module_name.span))
                 };
-                let Some(_) = module.decls.get(name.data) else {
+                let Some(_) = module.decls.get(&name.data) else {
                     return Err(ResolutionError::UnboundInModule { module_name: module_name.data, name: name.data }.attach(name.span))
                 };
 
@@ -103,8 +104,8 @@ impl<'source> NameResolver<'source> {
 
     fn resolve_names_in_declaration(
         &mut self,
-        decl: Spanned<'source, Declaration<'source>>,
-    ) -> ResolutionResult<'source, Declaration<'source>> {
+        decl: Spanned<Declaration>,
+    ) -> ResolutionResult<Declaration> {
         let resolved_decl = match decl.data {
             Declaration::Function { name, params, body } => {
                 let local_count: usize = params
@@ -122,13 +123,13 @@ impl<'source> NameResolver<'source> {
         Ok(resolved_decl.attach(decl.span))
     }
 
-    fn collect_declarations(&mut self, module: &Module<'source>) {
+    fn collect_declarations(&mut self, module: &Module) {
         for decl in module.decls.values() {
             #[allow(clippy::single_match)]
             match &decl.data {
                 Declaration::Function { name, .. } => {
                     // TODO: Handle duplicate function declarations
-                    self.globals.insert(name.data);
+                    self.globals.insert(name.data.clone());
                 }
                 _ => (),
             }
@@ -137,8 +138,9 @@ impl<'source> NameResolver<'source> {
 
     fn handle_imports(
         &mut self,
-        imports: HashMap<&'source str, Module<'source>>,
-    ) -> Result<(), Spanned<'source, ResolutionError<'source>>> {
+        imports: HashMap<Symbol, Module>,
+    ) -> Result<(), Spanned<ResolutionError>> {
+        // Fix import errors.
         for (name, module) in imports {
             let resolved_module = NameResolver::new().resolve_names_in_module(module)?;
             self.imports.insert(name, resolved_module);
@@ -149,8 +151,8 @@ impl<'source> NameResolver<'source> {
 
     pub fn resolve_names_in_module(
         mut self,
-        module: Module<'source>,
-    ) -> Result<Module<'source>, Spanned<'source, ResolutionError<'source>>> {
+        module: Module,
+    ) -> Result<Module, Spanned<ResolutionError>> {
         self.collect_declarations(&module);
         self.handle_imports(module.imports)?;
 
@@ -163,10 +165,10 @@ impl<'source> NameResolver<'source> {
         Ok(Module::new(resolved_module, self.imports))
     }
 
-    fn push_names_in_pattern(&mut self, pattern: &Spanned<'source, Pattern<'source>>) -> usize {
-        match pattern.data {
+    fn push_names_in_pattern(&mut self, pattern: &Spanned<Pattern>) -> usize {
+        match &pattern.data {
             Pattern::Any(identifier) => {
-                self.locals.push(identifier);
+                self.locals.push(identifier.clone());
                 1
             }
             _ => 0,
@@ -174,16 +176,13 @@ impl<'source> NameResolver<'source> {
     }
 }
 
-pub enum ResolutionError<'source> {
-    UnboundIdentifier(&'source str),
-    NonExistantModule(&'source str),
-    UnboundInModule {
-        module_name: &'source str,
-        name: &'source str,
-    },
+pub enum ResolutionError {
+    UnboundIdentifier(Symbol),
+    NonExistantModule(Symbol),
+    UnboundInModule { module_name: Symbol, name: Symbol },
 }
 
-impl Display for ResolutionError<'_> {
+impl Display for ResolutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnboundIdentifier(identifier) => write!(f, "`{identifier}` is not bound."),
@@ -195,6 +194,6 @@ impl Display for ResolutionError<'_> {
     }
 }
 
-impl HasSpan for ResolutionError<'_> {}
+impl HasSpan for ResolutionError {}
 
-type ResolutionResult<'a, T> = Result<Spanned<'a, T>, Spanned<'a, ResolutionError<'a>>>;
+type ResolutionResult<T> = Result<Spanned<T>, Spanned<ResolutionError>>;

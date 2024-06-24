@@ -21,19 +21,19 @@ fn main() -> io::Result<()> {
 
 fn start_from_file(file_path: &str) -> io::Result<()> {
     let file = read_to_string(file_path)?;
-    let module = match Parser::new(Tokens::new(file_path, &file)).module() {
+    let module = match Parser::new(Tokens::new(&file)).module() {
         Ok(program) => program,
         Err(err) => {
-            let file = read_to_string(err.span.source_name)?;
-            return err.report(&file);
+            let file = read_to_string(file_path)?;
+            return err.report(file_path, &file);
         }
     };
 
     let resolved_program = match NameResolver::new().resolve_names_in_module(module) {
         Ok(resolved_program) => resolved_program,
         Err(err) => {
-            let file = read_to_string(err.span.source_name)?;
-            return err.report(&file);
+            let file = read_to_string(file_path)?;
+            return err.report(file_path, &file);
         }
     };
 
@@ -62,10 +62,10 @@ fn start_repl() -> io::Result<()> {
             _ => (),
         }
 
-        let ast = match Parser::new(Tokens::new("REPL", input)).expression() {
+        let ast = match Parser::new(Tokens::new(input)).expression() {
             Ok(ast) => ast,
             Err(err) => {
-                err.report(input)?;
+                err.report("REPL", input)?;
                 continue;
             }
         };
@@ -73,7 +73,7 @@ fn start_repl() -> io::Result<()> {
         let resolved_ast = match NameResolver::new().resolve_names_in_expr(ast) {
             Ok(resolved_ast) => resolved_ast,
             Err(err) => {
-                err.report(input)?;
+                err.report("REPL", input)?;
                 continue;
             }
         };

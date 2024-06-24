@@ -1,61 +1,50 @@
 use std::fmt::Display;
 
 #[derive(Debug, Clone, Copy)]
-pub struct Span<'source> {
-    pub source_name: &'source str,
+pub struct Span {
     pub start: FilePosition,
     pub end: FilePosition,
 }
 
-impl<'source> Span<'source> {
-    pub fn new(source_name: &'source str, start: FilePosition, end: FilePosition) -> Self {
-        Self {
-            source_name,
-            start,
-            end,
-        }
+impl Span {
+    pub fn new(start: FilePosition, end: FilePosition) -> Self {
+        Self { start, end }
     }
 
     pub fn extend(self, other: Self) -> Self {
         Self {
-            source_name: self.source_name,
             start: self.start,
             end: other.end,
         }
     }
 
-    pub fn eof(source_name: &'source str) -> Self {
+    pub fn eof() -> Self {
         Self {
-            source_name,
             start: FilePosition::new(0, 0),
             end: FilePosition::new(0, 0),
         }
     }
 }
 
-impl Display for Span<'_> {
+impl Display for Span {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{} - {}:{}",
-            self.source_name, self.start, self.source_name, self.end
-        )
+        write!(f, ":{} - :{}", self.start, self.end)
     }
 }
 
 #[derive(Debug)]
-pub struct Spanned<'source, T> {
+pub struct Spanned<T> {
     pub data: T,
-    pub span: Span<'source>,
+    pub span: Span,
 }
 
-impl<'source, T> Spanned<'source, T> {
-    pub fn new(data: T, span: Span<'source>) -> Self {
+impl<T> Spanned<T> {
+    pub fn new(data: T, span: Span) -> Self {
         Self { data, span }
     }
 }
 
-impl<T: Display> Display for Spanned<'_, T> {
+impl<T: Display> Display for Spanned<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:<15} [{}]", format!("{}", self.data), self.span)
     }
