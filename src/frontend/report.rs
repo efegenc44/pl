@@ -74,6 +74,12 @@ impl Spanned<ParseError> {
 
 impl Spanned<ResolutionError> {
     pub fn report(&self, source_name: &str, source: &str) -> io::Result<()> {
-        report(self, source_name, source, "name resolution")
+        match &self.data {
+            ResolutionError::ImportError { import_path, error } => {
+                report(self, source_name, source, "parsing")?;
+                error.report(import_path, &read_to_string(import_path.as_ref())?)
+            }
+            _ => report(self, source_name, source, "name resolution")
+        }
     }
 }

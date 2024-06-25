@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display, usize};
 
 use crate::frontend::{
-    span::{HasSpan, Spanned},
+    span::{HasSpan, Span, Spanned},
     token::Symbol,
 };
 
@@ -28,27 +28,27 @@ impl Display for Operator {
 
 #[derive(Debug)]
 pub enum Expression {
-    Identifier(Symbol, Bound),
-    Integer(Symbol),
-    Float(Symbol),
-    String(Symbol),
+    Identifier(Spanned<Symbol>, Bound),
+    Integer(Spanned<Symbol>),
+    Float(Spanned<Symbol>),
+    String(Spanned<Symbol>),
     Binary {
-        lhs: Box<Spanned<Expression>>,
+        lhs: Box<Expression>,
         op: Operator,
-        rhs: Box<Spanned<Expression>>,
+        rhs: Box<Expression>,
     },
     Application {
-        expr: Box<Spanned<Expression>>,
-        args: Vec<Spanned<Expression>>,
+        expr: Box<Expression>,
+        args: Vec<Expression>,
     },
     Let {
-        pattern: Spanned<Pattern>,
-        expr: Box<Spanned<Expression>>,
-        body: Box<Spanned<Expression>>,
+        pattern: Pattern,
+        expr: Box<Expression>,
+        body: Box<Expression>,
     },
     Lambda {
-        params: Vec<Spanned<Pattern>>,
-        body: Box<Spanned<Expression>>,
+        params: Vec<Pattern>,
+        body: Box<Expression>,
     },
     Access {
         module_name: Spanned<Symbol>,
@@ -67,26 +67,26 @@ impl Expression {
         }
 
         match self {
-            Self::Identifier(identifier, bound) => println!("{identifier} {bound}"),
+            Self::Identifier(identifier, bound) => println!("{} {bound}", identifier.data),
             Self::Integer(literal) | Self::Float(literal) | Self::String(literal) => {
-                println!("{literal}")
+                println!("{}", literal.data)
             }
             Self::Binary { lhs, op, rhs } => {
                 println!("Binary:");
                 indented(format!("op: {op}\n"), depth + 1);
                 indented("lhs: ", depth + 1);
-                lhs.data._pretty_print(depth + 1);
+                lhs._pretty_print(depth + 1);
                 indented("rhs: ", depth + 1);
-                rhs.data._pretty_print(depth + 1);
+                rhs._pretty_print(depth + 1);
             }
             Self::Application { expr, args } => {
                 println!("Application:");
                 indented("expr: ", depth + 1);
-                expr.data._pretty_print(depth + 1);
+                expr._pretty_print(depth + 1);
                 indented("args:\n", depth + 1);
                 for arg in args {
                     indented("", depth + 2);
-                    arg.data._pretty_print(depth + 2);
+                    arg._pretty_print(depth + 2);
                 }
             }
             Self::Let {
@@ -96,28 +96,25 @@ impl Expression {
             } => {
                 println!("Let:");
                 indented("pattern: ", depth + 1);
-                pattern.data._pretty_print(depth + 1);
+                pattern._pretty_print(depth + 1);
                 indented("expr: ", depth + 1);
-                expr.data._pretty_print(depth + 1);
+                expr._pretty_print(depth + 1);
                 indented("body: ", depth + 1);
-                body.data._pretty_print(depth + 1);
+                body._pretty_print(depth + 1);
             }
             Self::Lambda { params, body } => {
                 println!("Lambda:");
                 indented("params:\n", depth + 1);
                 for param in params {
                     indented("", depth + 2);
-                    param.data._pretty_print(depth + 2);
+                    param._pretty_print(depth + 2);
                 }
                 indented("body: ", depth + 1);
-                body.data._pretty_print(depth + 1);
+                body._pretty_print(depth + 1);
             }
-            Self::Access {
-                module_name: module,
-                name,
-            } => {
+            Self::Access { module_name, name } => {
                 println!("Access:");
-                indented(format!("module: {}\n", module.data), depth + 1);
+                indented(format!("module: {}\n", module_name.data), depth + 1);
                 indented(format!("name: {}\n", name.data), depth + 1);
             }
         }
@@ -145,10 +142,10 @@ impl Display for Bound {
 
 #[derive(Debug)]
 pub enum Pattern {
-    Any(Symbol),
-    String(Symbol),
-    Integer(Symbol),
-    Float(Symbol),
+    Any(Spanned<Symbol>),
+    String(Spanned<Symbol>),
+    Integer(Spanned<Symbol>),
+    Float(Spanned<Symbol>),
 }
 
 impl Pattern {
@@ -157,7 +154,7 @@ impl Pattern {
             Self::Any(literal)
             | Self::String(literal)
             | Self::Integer(literal)
-            | Self::Float(literal) => println!("{literal}"),
+            | Self::Float(literal) => println!("{}", literal.data),
         }
     }
 }
@@ -167,8 +164,8 @@ impl HasSpan for Pattern {}
 pub enum Declaration {
     Function {
         name: Spanned<Symbol>,
-        params: Vec<Spanned<Pattern>>,
-        body: Spanned<Expression>,
+        params: Vec<Pattern>,
+        body: Expression,
     },
     Import {
         parts: Vec<Spanned<Symbol>>,
@@ -186,20 +183,16 @@ impl Declaration {
         }
 
         match self {
-            Self::Function {
-                name,
-                params,
-                body: expr,
-            } => {
+            Self::Function { name, params, body } => {
                 println!("Func:");
                 indented(format!("name: {}\n", name.data), depth + 1);
                 indented("params:\n", depth + 1);
                 for param in params {
                     indented("", depth + 2);
-                    param.data._pretty_print(depth + 2);
+                    param._pretty_print(depth + 2);
                 }
                 indented("expr: ", depth + 1);
-                expr.data._pretty_print(depth + 1);
+                body._pretty_print(depth + 1);
             }
             Self::Import { parts } => {
                 println!("Import:");
@@ -214,16 +207,25 @@ impl Declaration {
 
 impl HasSpan for Declaration {}
 
+pub struct Import {
+    pub span: Span,
+    pub import_path: Symbol,
+    pub module: Module,
+}
+
+impl Import {
+    pub fn new(span: Span, import_path: Symbol, module: Module) -> Self {
+        Self { span, import_path, module }
+    }
+}
+
 pub struct Module {
-    pub decls: HashMap<Symbol, Spanned<Declaration>>,
-    pub imports: HashMap<Symbol, Module>,
+    pub decls: HashMap<Symbol, Declaration>,
+    pub imports: HashMap<Symbol, Import>,
 }
 
 impl Module {
-    pub fn new(
-        decls: HashMap<Symbol, Spanned<Declaration>>,
-        imports: HashMap<Symbol, Module>,
-    ) -> Self {
+    pub fn new(decls: HashMap<Symbol, Declaration>, imports: HashMap<Symbol, Import>) -> Self {
         Self { decls, imports }
     }
 }

@@ -15,6 +15,7 @@ fn main() -> io::Result<()> {
     match args {
         [_] => start_repl(),
         [_, file_path] => start_from_file(file_path),
+        // TODO: Proper error reporting.
         _ => write!(stderr(), "Too many arguments."),
     }
 }
@@ -24,8 +25,7 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
     let module = match Parser::new(Tokens::new(&file)).module() {
         Ok(program) => program,
         Err(err) => {
-            let file = read_to_string(file_path)?;
-            return err.report(file_path, &file);
+            return err.report(file_path, &read_to_string(file_path)?);
         }
     };
 
@@ -38,7 +38,7 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
     };
 
     for decl in resolved_program.decls {
-        decl.1.data.pretty_print();
+        decl.1.pretty_print();
     }
 
     Ok(())
@@ -77,6 +77,6 @@ fn start_repl() -> io::Result<()> {
                 continue;
             }
         };
-        resolved_ast.data.pretty_print();
+        resolved_ast.pretty_print();
     }
 }
