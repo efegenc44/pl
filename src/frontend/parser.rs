@@ -1,7 +1,9 @@
 use std::{collections::HashMap, fmt::Display, fs::read_to_string, iter::Peekable};
 
 use crate::{
-    backend::ast::{Bound, Declaration, Expression, Import, Module, Operator, Pattern},
+    backend::ast::{
+        Bound, Declaration, Expression, Import, Module, Operator, Pattern, TypeExpr, TypedPattern,
+    },
     frontend::token::Token,
 };
 
@@ -108,6 +110,11 @@ impl<'source> Parser<'source> {
     fn lett(&mut self) -> ParseResult<Expression> {
         self.expect(Token::KeywordLet)?;
         let pattern = self.pattern()?;
+        let typ = if self.next_peek_is(&Token::Colon) {
+            Some(self.type_expr()?)
+        } else {
+            None
+        };
         self.expect(Token::Equals)?;
         let expr = Box::new(self.expression()?);
         self.expect(Token::KeywordIn)?;
@@ -115,6 +122,7 @@ impl<'source> Parser<'source> {
 
         Ok(Expression::Let {
             pattern,
+            typ,
             expr,
             body,
         })
@@ -165,6 +173,7 @@ impl<'source> Parser<'source> {
             Token::Integer(_) => self.literal(Expression::Integer),
             Token::Float(_) => self.literal(Expression::Float),
             Token::String(_) => self.literal(Expression::String),
+            Token::KeywordNothing => Ok(Expression::Nothing(self.tokens.next().unwrap().span)),
             Token::OpeningParenthesis => self.grouping(Self::expression),
             Token::KeywordLet => self.lett(),
             Token::Backslash => self.lambda(),
@@ -227,15 +236,58 @@ impl<'source> Parser<'source> {
         self.binary(0)
     }
 
+    fn func_type(&mut self) -> ParseResult<TypeExpr> {
+        self.expect(Token::KeywordFunc)?;
+        self.expect(Token::OpeningParenthesis)?;
+        let params = self.comma_seperated_until(Self::type_expr, Token::ClosingParenthesis)?;
+        self.expect(Token::RightArrow)?;
+        let ret = Box::new(self.type_expr()?);
+
+        Ok(TypeExpr::Function { params, ret })
+    }
+
+    fn type_expr(&mut self) -> ParseResult<TypeExpr> {
+        let Some(peeked) = self.tokens.peek() else {
+            return self.unexpected_eof()
+        };
+
+        match &peeked.data {
+            Token::Identifier(_) => {
+                let token = self.tokens.next().unwrap();
+                let symbol = token.data.to_string().into_boxed_str();
+                Ok(TypeExpr::Identifier(
+                    Spanned::new(symbol, token.span),
+                    Bound::None,
+                ))
+            }
+            Token::OpeningParenthesis => self.grouping(Self::type_expr),
+            Token::KeywordFunc => self.func_type(),
+            unexpected => Err(ParseError::UnexpectedToken(unexpected.clone()).attach(peeked.span)),
+        }
+    }
+
+    fn typed_pattern(&mut self) -> ParseResult<TypedPattern> {
+        let pattern = self.pattern()?;
+        self.expect(Token::Colon)?;
+        let typ = self.type_expr()?;
+
+        Ok(TypedPattern { pattern, typ })
+    }
+
     fn func(&mut self) -> ParseResult<Declaration> {
         self.expect(Token::KeywordFunc)?;
         let name = self.expect_identifier()?;
         self.expect(Token::OpeningParenthesis)?;
-        let params = self.comma_seperated_until(Self::pattern, Token::ClosingParenthesis)?;
+        let params = self.comma_seperated_until(Self::typed_pattern, Token::ClosingParenthesis)?;
+        let ret = if self.next_peek_is(&Token::RightArrow) {
+            Some(self.type_expr()?)
+        } else {
+            None
+        };
         self.expect(Token::Equals)?;
         let body = self.expression()?;
 
-        Ok(Declaration::Function { name, params, body })
+        Ok(Declaration::Function { name, params, body, ret })
     }
 
     fn import(&mut self) -> ParseResult<Declaration> {
@@ -267,13 +319,14 @@ impl<'source> Parser<'source> {
             let decl = self.declaration()?;
             match decl {
                 Declaration::Function { ref name, .. } => {
-                    // TODO
-                    let span = name.span;
-                    let name = name.data.clone();
-                    if decls.insert(name.clone(), decl).is_some() {
-                        return Err(ParseError::DuplicateDeclaration(name).attach(span))
+                    if decls.contains_key(name.data.as_ref()) {
+                        return Err(
+                            ParseError::DuplicateDeclaration(name.data.clone()).attach(name.span)
+                        );
+                    } else {
+                        decls.insert(name.data.clone(), decl);
                     }
-                },
+                }
                 Declaration::Import { parts, .. } => {
                     // TODO: Do not hardcode the file extension.
                     let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
@@ -288,19 +341,20 @@ impl<'source> Parser<'source> {
 
                     // TODO: Remove unwrap.
                     let module_file = read_to_string(&import_path).unwrap();
-                    let module = Parser::new(Tokens::new(&module_file))
-                        .module()
-                        .map_err(|error| {
-                            ParseError::ImportError {
-                                import_path: import_path.clone().into(),
-                                error: Box::new(error),
-                            }
-                            .attach(span)
-                        })?;
+                    let module =
+                        Parser::new(Tokens::new(&module_file))
+                            .module()
+                            .map_err(|error| {
+                                ParseError::ImportError {
+                                    import_path: import_path.clone().into(),
+                                    error: Box::new(error),
+                                }
+                                .attach(span)
+                            })?;
 
                     let module_name = parts.last().unwrap().data.clone();
                     imports.insert(module_name, Import::new(span, import_path.into(), module));
-                },
+                }
             };
         }
 
@@ -327,7 +381,9 @@ impl Display for ParseError {
             Self::UnexpectedEOF => write!(f, "Unexpected EOF."),
             Self::UnexpectedToken(unexpected) => write!(f, "Unexpected token: `{unexpected}`."),
             Self::ImportError { .. } => write!(f, "Error while importing module."),
-            Self::DuplicateDeclaration(identifier) => write!(f, "`{identifier}` has already declared."),
+            Self::DuplicateDeclaration(identifier) => {
+                write!(f, "`{identifier}` has already declared.")
+            }
         }
     }
 }

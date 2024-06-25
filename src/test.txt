@@ -1,4 +1,4 @@
 import src::test2
 
-func wow("Hello") = test2::abs
-func add(x, y) = x + y
+func wow("Hello": String) -> func(Integer) -> Integer = test2::abs
+func add(x: Integer, y: Integer) -> Integer = x

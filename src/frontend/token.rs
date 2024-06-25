@@ -26,6 +26,7 @@ pub enum Token {
     KeywordIn,
     KeywordFunc,
     KeywordImport,
+    KeywordNothing,
 }
 
 impl Display for Token {
@@ -55,6 +56,7 @@ impl Display for Token {
             Self::KeywordIn => write!(f, "in"),
             Self::KeywordFunc => write!(f, "func"),
             Self::KeywordImport => write!(f, "import"),
+            Self::KeywordNothing => write!(f, "nothing"),
         }
     }
 }

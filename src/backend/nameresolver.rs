@@ -8,26 +8,35 @@ use crate::frontend::{
     token::Symbol,
 };
 
-use super::ast::{Bound, Declaration, Expression, Import, Module, Pattern};
+use super::ast::{Bound, Declaration, Expression, Import, Module, Pattern, TypeExpr, TypedPattern};
 
 pub struct NameResolver {
     locals: Vec<Symbol>,
     decls: HashSet<Symbol>,
     imports: HashMap<Symbol, Import>,
+    types: HashSet<Symbol>,
 }
 
 impl NameResolver {
     pub fn new() -> Self {
+        let primtive_types: [Box<str>; 4] = [
+            "Integer".into(),
+            "String".into(),
+            "Float".into(),
+            "Nothing".into()
+        ];
+
         Self {
             locals: Vec::new(),
             decls: HashSet::new(),
             imports: HashMap::new(),
+            types: HashSet::from(primtive_types),
         }
     }
 
     pub fn resolve_names_in_expr(&mut self, expr: Expression) -> ResolutionResult<Expression> {
         let resolved_expr = match expr {
-            Expression::Integer(_) | Expression::Float(_) | Expression::String(_) => expr,
+            Expression::Integer(_) | Expression::Float(_) | Expression::String(_) | Expression::Nothing(_) => expr,
             Expression::Identifier(identifier, _) => {
                 if let Some(indice) = self
                     .locals
@@ -56,13 +65,18 @@ impl NameResolver {
                     .map(|arg| self.resolve_names_in_expr(arg))
                     .collect::<Result<Vec<_>, _>>()?,
             },
-            Expression::Let { pattern, expr, body } => {
+            Expression::Let { pattern, typ, expr, body } => {
                 let expr = Box::new(self.resolve_names_in_expr(*expr)?);
+                let typ = if let Some(typ) = typ {
+                    Some(self.resolve_names_in_type_expr(typ)?)
+                } else {
+                    None
+                };
                 let local_count = self.push_names_in_pattern(&pattern);
                 let body = Box::new(self.resolve_names_in_expr(*body)?);
                 self.locals.truncate(self.locals.len() - local_count);
 
-                Expression::Let { pattern, expr, body }
+                Expression::Let { pattern, typ, expr, body }
             }
             Expression::Lambda { params, body } => {
                 let local_count = params
@@ -91,17 +105,50 @@ impl NameResolver {
         Ok(resolved_expr)
     }
 
+    fn resolve_names_in_type_expr(&mut self, type_expr: TypeExpr) -> ResolutionResult<TypeExpr> {
+        let resolved_type_expr = match type_expr {
+            // TODO: Local type variables for polyphormic types.
+            TypeExpr::Identifier(identifier, _) => {
+                let Some(name) = self.types.get(&identifier.data) else {
+                    return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
+                };
+
+                TypeExpr::Identifier(identifier, Bound::Global(name.clone()))
+            }
+            TypeExpr::Function { params, ret } => TypeExpr::Function {
+                ret: Box::new(self.resolve_names_in_type_expr(*ret)?),
+                params: params
+                    .into_iter()
+                    .map(|arg| self.resolve_names_in_type_expr(arg))
+                    .collect::<Result<Vec<_>, _>>()?,
+            },
+        };
+
+        Ok(resolved_type_expr)
+    }
+
     fn resolve_names_in_decl(&mut self, decl: Declaration) -> ResolutionResult<Declaration> {
         let resolved_decl = match decl {
-            Declaration::Function { name, params, body } => {
-                let local_count: usize = params
-                    .iter()
-                    .map(|param| self.push_names_in_pattern(param))
-                    .sum();
+            Declaration::Function { name, params, body, ret } => {
+                let mut resolved_params = vec![];
+                let mut local_count = 0;
+                for TypedPattern { pattern, typ } in params {
+                    local_count += self.push_names_in_pattern(&pattern);
+                    resolved_params.push(TypedPattern {
+                        typ: self.resolve_names_in_type_expr(typ)?,
+                        pattern,
+                    })
+                }
                 let body = self.resolve_names_in_expr(body)?;
                 self.locals.truncate(self.locals.len() - local_count);
 
-                Declaration::Function { name, params, body }
+                let ret = if let Some(ret) = ret {
+                    Some(self.resolve_names_in_type_expr(ret)?)
+                } else {
+                    None
+                };
+
+                Declaration::Function { name, params: resolved_params, body, ret }
             }
             // Imports are handled seperately. (see NameResolver::handle_imports)
             Declaration::Import { .. } => unreachable!(),
@@ -128,7 +175,7 @@ impl NameResolver {
         Ok(())
     }
 
-    fn collect_declarations(&mut self, decls: &HashMap<Symbol, Declaration>) -> ResolutionResult<()> {
+    fn collect_declarations(&mut self, decls: &HashMap<Symbol, Declaration>) {
         // NOTE: Duplicate declarations are handled at the end of the parsing.
         for decl in decls.values() {
             #[allow(clippy::single_match)]
@@ -139,12 +186,10 @@ impl NameResolver {
                 _ => (),
             }
         }
-
-        Ok(())
     }
 
     pub fn resolve_names_in_module(mut self, module: Module) -> ResolutionResult<Module> {
-        self.collect_declarations(&module.decls)?;
+        self.collect_declarations(&module.decls);
         self.handle_imports(module.imports)?;
 
         let mut resolved_decls = HashMap::new();
@@ -170,7 +215,10 @@ impl NameResolver {
 pub enum ResolutionError {
     UnboundIdentifier(Symbol),
     NonExistantModule(Symbol),
-    UnboundInModule { module_name: Symbol, name: Symbol },
+    UnboundInModule {
+        module_name: Symbol,
+        name: Symbol,
+    },
     ImportError {
         import_path: Symbol,
         error: Box<Spanned<ResolutionError>>,

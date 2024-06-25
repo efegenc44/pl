@@ -7,7 +7,7 @@ use std::{
     io::{self, stderr, stdin, stdout, Write},
 };
 
-use backend::nameresolver::NameResolver;
+use backend::{nameresolver::NameResolver, typechecker::TypeChecker};
 use frontend::{parser::Parser, tokens::Tokens};
 
 fn main() -> io::Result<()> {
@@ -32,14 +32,13 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
     let resolved_program = match NameResolver::new().resolve_names_in_module(module) {
         Ok(resolved_program) => resolved_program,
         Err(err) => {
-            let file = read_to_string(file_path)?;
-            return err.report(file_path, &file);
+            return err.report(file_path, &read_to_string(file_path)?);
         }
     };
 
-    for decl in resolved_program.decls {
-        decl.1.pretty_print();
-    }
+    if let Err(err) = TypeChecker::new().type_check_module(&resolved_program) {
+        return err.report(file_path, &read_to_string(file_path)?);
+    };
 
     Ok(())
 }
@@ -70,13 +69,12 @@ fn start_repl() -> io::Result<()> {
             }
         };
 
-        let resolved_ast = match NameResolver::new().resolve_names_in_expr(ast) {
+        let _resolved_ast = match NameResolver::new().resolve_names_in_expr(ast) {
             Ok(resolved_ast) => resolved_ast,
             Err(err) => {
                 err.report("REPL", input)?;
                 continue;
             }
         };
-        resolved_ast.pretty_print();
     }
 }

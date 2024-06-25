@@ -1,2 +1,2 @@
-func sub(x, y) = y - x
-func abs(x) = x
+func sub(x: Integer, y: Integer) = nothing
+func abs(x: Integer) -> Integer = x

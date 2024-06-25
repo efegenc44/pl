@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Display, usize};
 
 use crate::frontend::{
-    span::{HasSpan, Span, Spanned},
+    span::{Span, Spanned},
     token::Symbol,
 };
 
@@ -32,6 +32,7 @@ pub enum Expression {
     Integer(Spanned<Symbol>),
     Float(Spanned<Symbol>),
     String(Spanned<Symbol>),
+    Nothing(Span),
     Binary {
         lhs: Box<Expression>,
         op: Operator,
@@ -43,6 +44,7 @@ pub enum Expression {
     },
     Let {
         pattern: Pattern,
+        typ: Option<TypeExpr>,
         expr: Box<Expression>,
         body: Box<Expression>,
     },
@@ -57,71 +59,21 @@ pub enum Expression {
 }
 
 impl Expression {
-    pub fn pretty_print(&self) {
-        self._pretty_print(0);
-    }
-
-    fn _pretty_print(&self, depth: usize) {
-        fn indented<T: Display>(msg: T, depth: usize) {
-            print!("{:1$}{msg}", "", depth * 2);
-        }
-
+    pub fn span(&self) -> Span {
         match self {
-            Self::Identifier(identifier, bound) => println!("{} {bound}", identifier.data),
-            Self::Integer(literal) | Self::Float(literal) | Self::String(literal) => {
-                println!("{}", literal.data)
-            }
-            Self::Binary { lhs, op, rhs } => {
-                println!("Binary:");
-                indented(format!("op: {op}\n"), depth + 1);
-                indented("lhs: ", depth + 1);
-                lhs._pretty_print(depth + 1);
-                indented("rhs: ", depth + 1);
-                rhs._pretty_print(depth + 1);
-            }
-            Self::Application { expr, args } => {
-                println!("Application:");
-                indented("expr: ", depth + 1);
-                expr._pretty_print(depth + 1);
-                indented("args:\n", depth + 1);
-                for arg in args {
-                    indented("", depth + 2);
-                    arg._pretty_print(depth + 2);
-                }
-            }
-            Self::Let {
-                pattern,
-                expr,
-                body,
-            } => {
-                println!("Let:");
-                indented("pattern: ", depth + 1);
-                pattern._pretty_print(depth + 1);
-                indented("expr: ", depth + 1);
-                expr._pretty_print(depth + 1);
-                indented("body: ", depth + 1);
-                body._pretty_print(depth + 1);
-            }
-            Self::Lambda { params, body } => {
-                println!("Lambda:");
-                indented("params:\n", depth + 1);
-                for param in params {
-                    indented("", depth + 2);
-                    param._pretty_print(depth + 2);
-                }
-                indented("body: ", depth + 1);
-                body._pretty_print(depth + 1);
-            }
-            Self::Access { module_name, name } => {
-                println!("Access:");
-                indented(format!("module: {}\n", module_name.data), depth + 1);
-                indented(format!("name: {}\n", name.data), depth + 1);
-            }
+            Self::Identifier(lexeme, _)
+            | Self::Integer(lexeme)
+            | Self::Float(lexeme)
+            | Self::String(lexeme) => lexeme.span,
+            Self::Nothing(span) => *span,
+            Self::Binary { lhs, op: _, rhs } => lhs.span().extend(rhs.span()),
+            Self::Application { expr, args: _ } => expr.span(),
+            Self::Let { pattern: _, typ: _, expr: _, body } => body.span(),
+            Self::Lambda { params: _, body } => body.span(),
+            Self::Access { module_name, name } => module_name.span.extend(name.span),
         }
     }
 }
-
-impl HasSpan for Expression {}
 
 #[derive(Debug)]
 pub enum Bound {
@@ -149,63 +101,41 @@ pub enum Pattern {
 }
 
 impl Pattern {
-    fn _pretty_print(&self, _depth: usize) {
+    pub fn span(&self) -> Span {
         match self {
-            Self::Any(literal)
-            | Self::String(literal)
-            | Self::Integer(literal)
-            | Self::Float(literal) => println!("{}", literal.data),
+            Self::Any(lexeme)
+            | Self::String(lexeme)
+            | Self::Integer(lexeme)
+            | Self::Float(lexeme) => lexeme.span,
         }
     }
 }
 
-impl HasSpan for Pattern {}
-
 pub enum Declaration {
     Function {
         name: Spanned<Symbol>,
-        params: Vec<Pattern>,
+        params: Vec<TypedPattern>,
         body: Expression,
+        ret: Option<TypeExpr>,
     },
     Import {
         parts: Vec<Spanned<Symbol>>,
     },
 }
 
-impl Declaration {
-    pub fn pretty_print(&self) {
-        self._pretty_print(0)
-    }
-
-    fn _pretty_print(&self, depth: usize) {
-        fn indented<T: Display>(msg: T, depth: usize) {
-            print!("{:1$}{msg}", "", depth * 2);
-        }
-
-        match self {
-            Self::Function { name, params, body } => {
-                println!("Func:");
-                indented(format!("name: {}\n", name.data), depth + 1);
-                indented("params:\n", depth + 1);
-                for param in params {
-                    indented("", depth + 2);
-                    param._pretty_print(depth + 2);
-                }
-                indented("expr: ", depth + 1);
-                body._pretty_print(depth + 1);
-            }
-            Self::Import { parts } => {
-                println!("Import:");
-                indented("parts:\n", depth + 1);
-                for part in parts {
-                    indented(format!("{}\n", part.data), depth + 2);
-                }
-            }
-        }
-    }
+#[derive(Debug)]
+pub enum TypeExpr {
+    Identifier(Spanned<Symbol>, Bound),
+    Function {
+        params: Vec<TypeExpr>,
+        ret: Box<TypeExpr>,
+    },
 }
 
-impl HasSpan for Declaration {}
+pub struct TypedPattern {
+    pub pattern: Pattern,
+    pub typ: TypeExpr,
+}
 
 pub struct Import {
     pub span: Span,
@@ -215,7 +145,11 @@ pub struct Import {
 
 impl Import {
     pub fn new(span: Span, import_path: Symbol, module: Module) -> Self {
-        Self { span, import_path, module }
+        Self {
+            span,
+            import_path,
+            module,
+        }
     }
 }
 

@@ -74,6 +74,7 @@ impl<'source> Tokens<'source> {
             "in" => Token::KeywordIn,
             "func" => Token::KeywordFunc,
             "import" => Token::KeywordImport,
+            "nothing" => Token::KeywordNothing,
             identifier => Token::Identifier(identifier.into()),
         };
         Spanned::new(token, Span::new(start_position, end_position))
