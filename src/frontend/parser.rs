@@ -95,7 +95,7 @@ impl<'source> Parser<'source> {
         F: Fn(Symbol) -> T,
     {
         let token = self.tokens.next().unwrap();
-        Ok(constructor(token.to_string().into_boxed_str()).attach(span))
+        Ok(constructor(token.data.to_string().into_boxed_str()).attach(span))
     }
 
     fn grouping(&mut self) -> ParseResult<Spanned<Expression>> {
@@ -169,8 +169,8 @@ impl<'source> Parser<'source> {
         let span = peeked.span;
         match &peeked.data {
             Token::Identifier(_) => {
-                let identifier = self.tokens.next().unwrap().to_string().into_boxed_str();
-                let expr = if let Some(Token::Dot) = self.tokens.peek().map(|peeked| &peeked.data) {
+                let identifier = self.tokens.next().unwrap().data.to_string().into_boxed_str();
+                let expr = if let Some(Token::DoubleColon) = self.tokens.peek().map(|peeked| &peeked.data) {
                     self.tokens.next();
                     let name = self.expect_identifier()?;
                     let end = name.span;
@@ -278,7 +278,7 @@ impl<'source> Parser<'source> {
         parts.push(self.expect_identifier()?);
         while self
             .tokens
-            .next_if(|next| next.data == Token::Dot)
+            .next_if(|next| next.data == Token::DoubleColon)
             .is_some()
         {
             parts.push(self.expect_identifier()?);

@@ -176,6 +176,7 @@ impl NameResolver {
     }
 }
 
+#[derive(Debug)]
 pub enum ResolutionError {
     UnboundIdentifier(Symbol),
     NonExistantModule(Symbol),

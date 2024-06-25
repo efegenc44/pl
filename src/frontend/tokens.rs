@@ -140,6 +140,7 @@ impl<'source> Tokens<'source> {
             '<' => self.single_char(Token::Less),
             '\\' => self.single_char(Token::Backslash),
             '-' => self.double_char(Token::Minus, '>', Token::RightArrow),
+            ':' => self.double_char(Token::Colon, ':', Token::DoubleColon),
             _ => todo!("Unknown start of a token."),
         };
         let end_position = self.current_position();

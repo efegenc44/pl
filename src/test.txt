@@ -1,4 +1,4 @@
-import src.test2
+import src::test2
 
-func wow("Hello") = test2.abs
+func wow("Hello") = test2::abs
 func add(x, y) = x + y
