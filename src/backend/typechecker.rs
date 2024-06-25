@@ -130,14 +130,15 @@ impl TypeChecker {
 
     fn type_check_decl(&mut self, decl: &Declaration) -> TypeCheckResult<()> {
         match decl {
-            Declaration::Function { name, params: _, body, ret: _ } => {
+            Declaration::Function { name, params: patterns, body, ret: _ } => {
                 let Type::Function { params, ret } = self.decls[&name.data].clone() else {
                     unreachable!()
                 };
 
-                for param in params {
-                    self.locals.push(param);
+                for (pattern, typ) in iter::zip(patterns, params) {
+                    self.push_types_in_pattern(&pattern.pattern, typ)?;
                 }
+
                 self.expect_type(body, &ret)?;
                 Ok(())
             },
