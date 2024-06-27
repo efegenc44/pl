@@ -7,7 +7,7 @@ use std::{
     io::{self, stderr, stdin, stdout, Write},
 };
 
-use backend::{nameresolver::NameResolver, typechecker::TypeChecker};
+use backend::{module::Module, nameresolver::NameResolver, typechecker::TypeChecker};
 use frontend::{parser::Parser, tokens::Tokens};
 
 fn main() -> io::Result<()> {
@@ -22,22 +22,24 @@ fn main() -> io::Result<()> {
 
 fn start_from_file(file_path: &str) -> io::Result<()> {
     let file = read_to_string(file_path)?;
-    let module = match Parser::new(Tokens::new(&file)).module() {
-        Ok(program) => program,
-        Err(err) => {
-            return err.report(file_path, &read_to_string(file_path)?);
-        }
+
+    let declarations = match Parser::new(Tokens::new(&file)).declarations() {
+        Ok(declarations) => declarations,
+        Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    let resolved_program = match NameResolver::new().resolve_names_in_module(module) {
-        Ok(resolved_program) => resolved_program,
-        Err(err) => {
-            return err.report(file_path, &read_to_string(file_path)?);
-        }
+    let module = match Module::new(declarations) {
+        Ok(module) => module,
+        Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    if let Err(err) = TypeChecker::new().type_check_module(&resolved_program) {
-        return err.report(file_path, &read_to_string(file_path)?);
+    let resolved_module = match NameResolver::new().resolve_module(module) {
+        Ok(resolved_module) => resolved_module,
+        Err(error) => return error.report(file_path, &read_to_string(file_path)?)
+    };
+
+    if let Err(error) = TypeChecker::new().type_check_module(&resolved_module) {
+        return error.report(file_path, &read_to_string(file_path)?)
     };
 
     Ok(())
@@ -61,20 +63,30 @@ fn start_repl() -> io::Result<()> {
             _ => (),
         }
 
-        let ast = match Parser::new(Tokens::new(input)).expression() {
-            Ok(ast) => ast,
-            Err(err) => {
-                err.report("REPL", input)?;
+        let expression = match Parser::new(Tokens::new(input)).expression() {
+            Ok(expression) => expression,
+            Err(error) => {
+                error.report("REPL", input)?;
                 continue;
             }
         };
 
-        let _resolved_ast = match NameResolver::new().resolve_names_in_expr(ast) {
-            Ok(resolved_ast) => resolved_ast,
-            Err(err) => {
-                err.report("REPL", input)?;
+        let resolved_expression = match NameResolver::new().resolve_expr(expression) {
+            Ok(resolved_expression) => resolved_expression,
+            Err(error) => {
+                error.report("REPL", input)?;
                 continue;
             }
         };
+
+        let typ = match TypeChecker::new().type_check_expr(&resolved_expression) {
+            Ok(typ) => typ,
+            Err(error) => {
+                error.report("REPL", input)?;
+                continue;
+            }
+        };
+
+        println!(" : {typ}")
     }
 }

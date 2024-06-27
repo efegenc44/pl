@@ -1,8 +1,8 @@
-use std::{collections::HashMap, fmt::Display, fs::read_to_string, iter::Peekable};
+use std::{fmt::Display, fs::read_to_string, iter::Peekable};
 
 use crate::{
     backend::ast::{
-        Bound, Declaration, Expression, Import, Module, Operator, Pattern, TypeExpr, TypedPattern,
+        Bound, Declaration, Expression, Operator, Pattern, TypeExpr, TypedPattern,
     },
     frontend::token::Token,
 };
@@ -96,6 +96,17 @@ impl<'source> Parser<'source> {
         Ok(constructor(Spanned::new(symbol, token.span)))
     }
 
+    fn optional<T, F>(&mut self, f: F, condition_token: Token) -> ParseResult<Option<T>>
+    where
+        F: Fn(&mut Self) -> ParseResult<T>
+    {
+        Ok(if self.next_peek_is(&condition_token) {
+            Some(f(self)?)
+        } else {
+            None
+        })
+    }
+
     fn grouping<T, F>(&mut self, f: F) -> ParseResult<T>
     where
         F: Fn(&mut Self) -> ParseResult<T>,
@@ -110,11 +121,7 @@ impl<'source> Parser<'source> {
     fn lett(&mut self) -> ParseResult<Expression> {
         self.expect(Token::KeywordLet)?;
         let pattern = self.pattern()?;
-        let typ = if self.next_peek_is(&Token::Colon) {
-            Some(self.type_expr()?)
-        } else {
-            None
-        };
+        let typ = self.optional(Self::type_expr, Token::Colon)?;
         self.expect(Token::Equals)?;
         let expr = Box::new(self.expression()?);
         self.expect(Token::KeywordIn)?;
@@ -279,11 +286,7 @@ impl<'source> Parser<'source> {
         let name = self.expect_identifier()?;
         self.expect(Token::OpeningParenthesis)?;
         let params = self.comma_seperated_until(Self::typed_pattern, Token::ClosingParenthesis)?;
-        let ret = if self.next_peek_is(&Token::RightArrow) {
-            Some(self.type_expr()?)
-        } else {
-            None
-        };
+        let ret = self.optional(Self::type_expr, Token::RightArrow)?;
         self.expect(Token::Equals)?;
         let body = self.expression()?;
 
@@ -297,7 +300,30 @@ impl<'source> Parser<'source> {
             parts.push(self.expect_identifier()?);
         }
 
-        Ok(Declaration::Import { parts })
+        // TODO: Do not hardcode the file extension.
+        let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
+            acc.push('\\');
+            acc.push_str(&part.data);
+            acc
+        }) + ".txt";
+
+        // TODO: Remove unwrap.
+        let import_file = read_to_string(&import_path).unwrap();
+        let import =
+            Parser::new(Tokens::new(&import_file))
+                .declarations()
+                .map_err(|error| {
+                    let first = parts.first().unwrap().span;
+                    let last = parts.last().unwrap().span;
+                    let span = first.extend(last);
+                    ParseError::ImportError {
+                        import_path: import_path.clone().into(),
+                        error: Box::new(error),
+                    }
+                    .attach(span)
+                })?;
+
+        Ok(Declaration::Import { parts, import })
     }
 
     fn declaration(&mut self) -> ParseResult<Declaration> {
@@ -312,53 +338,13 @@ impl<'source> Parser<'source> {
         }
     }
 
-    pub fn module(mut self) -> ParseResult<Module> {
-        let mut decls = HashMap::new();
-        let mut imports = HashMap::new();
+    pub fn declarations(&mut self) -> ParseResult<Vec<Declaration>> {
+        let mut declarations = vec![];
         while self.tokens.peek().is_some() {
-            let decl = self.declaration()?;
-            match decl {
-                Declaration::Function { ref name, .. } => {
-                    if decls.contains_key(name.data.as_ref()) {
-                        return Err(
-                            ParseError::DuplicateDeclaration(name.data.clone()).attach(name.span)
-                        );
-                    } else {
-                        decls.insert(name.data.clone(), decl);
-                    }
-                }
-                Declaration::Import { parts, .. } => {
-                    // TODO: Do not hardcode the file extension.
-                    let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
-                        acc.push('\\');
-                        acc.push_str(&part.data);
-                        acc
-                    }) + ".txt";
-
-                    let first = parts.first().unwrap().span;
-                    let last = parts.last().unwrap().span;
-                    let span = first.extend(last);
-
-                    // TODO: Remove unwrap.
-                    let module_file = read_to_string(&import_path).unwrap();
-                    let module =
-                        Parser::new(Tokens::new(&module_file))
-                            .module()
-                            .map_err(|error| {
-                                ParseError::ImportError {
-                                    import_path: import_path.clone().into(),
-                                    error: Box::new(error),
-                                }
-                                .attach(span)
-                            })?;
-
-                    let module_name = parts.last().unwrap().data.clone();
-                    imports.insert(module_name, Import::new(span, import_path.into(), module));
-                }
-            };
+            declarations.push(self.declaration()?)
         }
 
-        Ok(Module::new(decls, imports))
+        Ok(declarations)
     }
 }
 
@@ -370,7 +356,6 @@ pub enum ParseError {
         import_path: Symbol,
         error: Box<Spanned<ParseError>>,
     },
-    DuplicateDeclaration(Symbol),
 }
 
 impl HasSpan for ParseError {}
@@ -381,9 +366,6 @@ impl Display for ParseError {
             Self::UnexpectedEOF => write!(f, "Unexpected EOF."),
             Self::UnexpectedToken(unexpected) => write!(f, "Unexpected token: `{unexpected}`."),
             Self::ImportError { .. } => write!(f, "Error while importing module."),
-            Self::DuplicateDeclaration(identifier) => {
-                write!(f, "`{identifier}` has already declared.")
-            }
         }
     }
 }

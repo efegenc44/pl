@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, usize};
+use std::fmt::Display;
 
 use crate::frontend::{
     span::{Span, Spanned},
@@ -120,6 +120,7 @@ pub enum Declaration {
     },
     Import {
         parts: Vec<Spanned<Symbol>>,
+        import: Vec<Declaration>,
     },
 }
 
@@ -137,29 +138,3 @@ pub struct TypedPattern {
     pub typ: TypeExpr,
 }
 
-pub struct Import {
-    pub span: Span,
-    pub import_path: Symbol,
-    pub module: Module,
-}
-
-impl Import {
-    pub fn new(span: Span, import_path: Symbol, module: Module) -> Self {
-        Self {
-            span,
-            import_path,
-            module,
-        }
-    }
-}
-
-pub struct Module {
-    pub decls: HashMap<Symbol, Declaration>,
-    pub imports: HashMap<Symbol, Import>,
-}
-
-impl Module {
-    pub fn new(decls: HashMap<Symbol, Declaration>, imports: HashMap<Symbol, Import>) -> Self {
-        Self { decls, imports }
-    }
-}

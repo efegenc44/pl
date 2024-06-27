@@ -4,7 +4,7 @@ use std::{
     io::{self, stderr, Write},
 };
 
-use crate::backend::{nameresolver::ResolutionError, typechecker::TypeCheckError};
+use crate::backend::{module::ModuleError, nameresolver::ResolutionError, typechecker::TypeCheckError};
 
 use super::{parser::ParseError, span::Spanned};
 
@@ -92,6 +92,18 @@ impl Spanned<TypeCheckError> {
                 error.report(import_path, &read_to_string(import_path.as_ref())?)
             }
             _ => report(self, source_name, source, "type checking"),
+        }
+    }
+}
+
+impl Spanned<ModuleError> {
+    pub fn report(&self, source_name: &str, source: &str) -> io::Result<()> {
+        match &self.data {
+            ModuleError::ImportError { import_path, error } => {
+                report(self, source_name, source, "module creation")?;
+                error.report(import_path, &read_to_string(import_path.as_ref())?)
+            }
+            _ => report(self, source_name, source, "module creation"),
         }
     }
 }

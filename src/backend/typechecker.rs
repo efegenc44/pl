@@ -2,18 +2,16 @@ use std::{collections::HashMap, fmt::Display, iter};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::{ast::{Bound, Declaration, Expression, Import, Module, Pattern, TypeExpr}, typ::Type};
+use super::{ast::{Bound, Expression, Pattern, TypeExpr}, module::{self, Function, Import, Module}, typ::{self, Type}};
 
 pub struct  TypeChecker {
+    interface: Interface,
     locals: Vec<Type>,
-    decls: HashMap<Symbol, Type>,
-    imports: HashMap<Symbol, HashMap<Symbol, Type>>,
-    types: HashMap<Symbol, Type>,
 }
 
 impl TypeChecker {
     pub fn new() -> Self {
-        let primitive_types = HashMap::from([
+        let primitive_types: HashMap<Symbol, Type> = HashMap::from([
             ("Integer".into(), Type::Integer),
             ("String".into(), Type::String),
             ("Float".into(), Type::Float),
@@ -21,19 +19,20 @@ impl TypeChecker {
         ]);
 
         Self {
+            interface: Interface { types: primitive_types, ..Default::default() },
             locals: Vec::new(),
-            decls: HashMap::new(),
-            imports: HashMap::new(),
-            types: primitive_types,
         }
     }
 
-    fn type_check_expr(&mut self, expr: &Expression) -> TypeCheckResult<Type> {
+    pub fn type_check_expr(&mut self, expr: &Expression) -> TypeCheckResult<Type> {
         let typ = match expr {
             Expression::Identifier(_, bound) => {
                 match bound {
                     Bound::Local(indice) => self.locals[self.locals.len() - 1 - indice].clone(),
-                    Bound::Global(identifier) => self.decls[identifier].clone(),
+                    Bound::Global(identifier) => {
+                        let (params, ret) = self.interface.function_types[identifier].clone();
+                        Type::Function { params, ret: Box::new(ret) }
+                    },
                     Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
                 }
             },
@@ -81,7 +80,8 @@ impl TypeChecker {
                 todo!("Type Checking of Lambdas")
             },
             Expression::Access { module_name, name } => {
-                self.imports[&module_name.data][&name.data].clone()
+                let (params, ret) = self.interface.imports[&module_name.data].function_types[&name.data].clone();
+                Type::Function { params, ret: Box::new(ret) }
             },
         };
 
@@ -115,7 +115,7 @@ impl TypeChecker {
             TypeExpr::Identifier(_, bound) => {
                 match bound {
                     Bound::Local(_indice) => todo!("Local Type Variables"),
-                    Bound::Global(identifier) => self.types[identifier].clone(),
+                    Bound::Global(identifier) => self.interface.types[identifier].clone(),
                     Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
                 }
             },
@@ -128,73 +128,71 @@ impl TypeChecker {
         }
     }
 
-    fn type_check_decl(&mut self, decl: &Declaration) -> TypeCheckResult<()> {
-        match decl {
-            Declaration::Function { name, params: patterns, body, ret: _ } => {
-                let Type::Function { params, ret } = self.decls[&name.data].clone() else {
-                    unreachable!()
-                };
+    fn type_check_function(&mut self, function: &Function) -> TypeCheckResult<()> {
+        let Function { name, params: patterns, body, ret: _ } = function;
+        let (params, ret) = self.interface.function_types[&name.data].clone();
 
-                for (pattern, typ) in iter::zip(patterns, params) {
-                    self.push_types_in_pattern(&pattern.pattern, typ)?;
+        for (pattern, typ) in iter::zip(patterns, params) {
+            self.push_types_in_pattern(&pattern.pattern, typ)?;
+        }
+
+        self.expect_type(body, &ret)?;
+        Ok(())
+    }
+
+    fn import_interface(&mut self, imports: &HashMap<Symbol, Import>) -> TypeCheckResult<()> {
+        for (name, Import { parts, module }) in imports {
+            let mut type_checker = Self::new();
+            type_checker.type_check_module(module).map_err(|error| {
+                // TODO: Do not hardcode the file extension.
+                let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
+                    acc.push('\\');
+                    acc.push_str(&part.data);
+                    acc
+                }) + ".txt";
+
+                let first = parts.first().unwrap().span;
+                let last = parts.last().unwrap().span;
+                let span = first.extend(last);
+                TypeCheckError::ImportError {
+                    import_path: import_path.into(),
+                    error: Box::new(error),
                 }
+                .attach(span)
+            })?;
+            self.interface.imports.insert(name.clone(), type_checker.interface);
+        }
 
-                self.expect_type(body, &ret)?;
-                Ok(())
-            },
-            // Imports are handled seperately. (see TypeChecker::handle_imports)
-            Declaration::Import { .. } => unreachable!(),
+        Ok(())
+    }
+
+    fn type_interface(&mut self, _types: &HashMap<Symbol, module::Type>) {}
+
+    fn function_interface(&mut self, functions: &HashMap<Symbol, Function>) {
+        for Function { name, params, body: _, ret } in functions.values() {
+            let function_type = (
+                params
+                    .iter()
+                    .map(|param| self.eval_type_expr(&param.typ))
+                    .collect(),
+                ret.as_ref().map_or(Type::Nothing, |ret| self.eval_type_expr(ret))
+            );
+
+            self.interface.function_types.insert(name.data.clone(), function_type);
         }
     }
+
 
     pub fn type_check_module(&mut self, module: &Module) -> TypeCheckResult<()> {
-        self.collect_declarations(&module.decls);
-        self.handle_imports(&module.imports)?;
+        self.import_interface(&module.imports)?;
+        self.type_interface(&module.types);
+        self.function_interface(&module.functions);
 
-        for decl in module.decls.values() {
-            self.type_check_decl(decl)?;
+        for function in module.functions.values() {
+            self.type_check_function(function)?;
         }
 
         Ok(())
-    }
-
-    fn handle_imports(&mut self, imports: &HashMap<Symbol, Import>) -> TypeCheckResult<()>{
-        for (name, Import { span, import_path, module }) in imports {
-            let mut type_checker = TypeChecker::new();
-            type_checker
-                .type_check_module(module)
-                .map_err(|error| {
-                    TypeCheckError::ImportError {
-                        import_path: import_path.clone(),
-                        error: Box::new(error),
-                    }
-                    .attach(*span)
-                })?;
-
-            self.imports.insert(name.clone(), type_checker.decls);
-        }
-
-        Ok(())
-    }
-
-    fn collect_declarations(&mut self, decls: &HashMap<Symbol, Declaration>) {
-        for decl in decls.values() {
-            #[allow(clippy::single_match)]
-            match &decl {
-                Declaration::Function { name, params, body: _, ret  } => {
-                    let typ = Type::Function {
-                        params: params
-                            .iter()
-                            .map(|param| self.eval_type_expr(&param.typ))
-                            .collect(),
-                        ret: Box::new(ret.as_ref().map_or(Type::Nothing, |ret| self.eval_type_expr(ret))),
-                    };
-
-                    self.decls.insert(name.data.clone(), typ);
-                }
-                _ => (),
-            }
-        }
     }
 }
 
@@ -231,4 +229,10 @@ impl HasSpan for TypeCheckError {}
 
 type TypeCheckResult<T> = Result<T, Spanned<TypeCheckError>>;
 
+#[derive(Default)]
+pub struct Interface {
+    function_types: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
+    imports: HashMap<Symbol, Interface>,
+    types: HashMap<Symbol, typ::Type>,
+}
 
