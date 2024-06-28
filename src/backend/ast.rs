@@ -53,8 +53,7 @@ pub enum Expression {
         body: Box<Expression>,
     },
     Access {
-        from: Spanned<Symbol>,
-        name: Spanned<Symbol>,
+        path: Vec<Spanned<Symbol>>,
         namespace: Namespace,
     },
 }
@@ -71,7 +70,7 @@ impl Expression {
             Self::Application { expr, args: _ } => expr.span(),
             Self::Let { pattern: _, typ: _, expr: _, body } => body.span(),
             Self::Lambda { params: _, body } => body.span(),
-            Self::Access { from, name, namespace: _ } => from.span.extend(name.span),
+            Self::Access { path, namespace: _ } => path.first().unwrap().span.extend(path.last().unwrap().span),
         }
     }
 }
@@ -142,6 +141,9 @@ pub enum TypeExpr {
     Function {
         params: Vec<TypeExpr>,
         ret: Box<TypeExpr>,
+    },
+    Access {
+        path: Vec<Spanned<Symbol>>,
     },
 }
 

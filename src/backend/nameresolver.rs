@@ -87,24 +87,58 @@ impl NameResolver {
 
                 Expression::Lambda { params, body }
             }
-            Expression::Access { from, name, namespace: _ } => {
-                if let Some(import) = self.imports.get(&from.data) {
-                    let true = import.module.functions.contains_key(&name.data) else {
-                        let span = from.span.extend(name.span);
-                        return Err(ResolutionError::UnboundInModule { module_name: from.data, name: name.data }.attach(span))
-                    };
-                    Expression::Access { from, name, namespace: Namespace::Import }
-                } else if let Some(typ) = self.types.get(&from.data) {
-                    let true = typ.contains(&name.data) else {
-                        let span = from.span.extend(name.span);
-                        return Err(ResolutionError::UnboundInModule { module_name: from.data, name: name.data }.attach(span))
-                    };
-                    Expression::Access { from, name, namespace: Namespace::Type }
-                } else {
-                    return Err(ResolutionError::NonExistantModule(from.data).attach(from.span))
+            Expression::Access { path, namespace: _ } => {
+                match &path[..] {
+                    [_] | [] => unreachable!(),
+                    [from, name] => {
+                        if let Some(import) = self.imports.get(&from.data) {
+                            let true = import.module.functions.contains_key(&name.data) else {
+                                let span = from.span.extend(name.span);
+                                return Err(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(span))
+                            };
+                            Expression::Access { path, namespace: Namespace::Import }
+                        } else if let Some(typ) = self.types.get(&from.data) {
+                            let true = typ.contains(&name.data) else {
+                                let span = from.span.extend(name.span);
+                                return Err(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(span))
+                            };
+                            Expression::Access { path, namespace: Namespace::Type }
+                        } else {
+                            return Err(ResolutionError::NonExistantModule(from.data.clone()).attach(from.span))
+                        }
+                    },
+                    // In this case modules.len() >= 1 and they have to refer to a module.
+                    [modules@.., before, last] => {
+                        let from = &modules.first().unwrap();
+                        let Some(mut current_import) = self.imports.get(&from.data) else {
+                            return Err(ResolutionError::NonExistantModule(from.data.clone()).attach(from.span))
+                        };
+
+                        for module in &modules[1..] {
+                            let Some(import) = current_import.module.imports.get(&module.data) else {
+                                return Err(ResolutionError::NonExistantModule(module.data.clone()).attach(module.span))
+                            };
+
+                            current_import = import;
+                        }
+
+                        if let Some(import) = current_import.module.imports.get(&before.data) {
+                            let true = import.module.functions.contains_key(&last.data) else {
+                                let span = before.span.extend(last.span);
+                                return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(span))
+                            };
+                            Expression::Access { path, namespace: Namespace::Import }
+                        } else if let Some(typ) = current_import.module.types.get(&before.data) {
+                            let true = typ.consts.iter().any(|(x, _)| &x.data == &last.data) else {
+                                let span = before.span.extend(last.span);
+                                return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(span))
+                            };
+                            Expression::Access { path, namespace: Namespace::Type }
+                        } else {
+                            return Err(ResolutionError::NonExistantModule(before.data.clone()).attach(before.span))
+                        }
+                    },
                 }
-
-
             }
         };
 
@@ -128,6 +162,49 @@ impl NameResolver {
                     .map(|arg| self.resolve_type_expr(arg))
                     .collect::<Result<Vec<_>, _>>()?,
             },
+            TypeExpr::Access { path } => {
+                match &path[..] {
+                    [_] | [] => unreachable!(),
+                    [from, name] => {
+                        let Some(import) = self.imports.get(&from.data) else {
+                            return Err(ResolutionError::NonExistantModule(from.data.clone()).attach(from.span))
+                        };
+
+                        let true = import.module.types.contains_key(&name.data) else {
+                            let span = from.span.extend(name.span);
+                            return Err(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(span))
+                        };
+
+                        TypeExpr::Access { path }
+                    },
+                    // In this case modules.len() >= 1 and they have to refer to a module.
+                    [modules@.., before, last] => {
+                        let from = &modules.first().unwrap();
+                        let Some(mut current_import) = self.imports.get(&from.data) else {
+                            return Err(ResolutionError::NonExistantModule(from.data.clone()).attach(from.span))
+                        };
+
+                        for module in &modules[1..] {
+                            let Some(import) = current_import.module.imports.get(&module.data) else {
+                                return Err(ResolutionError::NonExistantModule(module.data.clone()).attach(module.span))
+                            };
+
+                            current_import = import;
+                        }
+
+                        let Some(import) = current_import.module.imports.get(&before.data) else {
+                            return Err(ResolutionError::NonExistantModule(before.data.clone()).attach(before.span))
+                        };
+
+                        let true = import.module.types.contains_key(&last.data) else {
+                            let span = before.span.extend(last.span);
+                            return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(span))
+                        };
+
+                        TypeExpr::Access { path }
+                    },
+                }
+            }
         };
 
         Ok(resolved_type_expr)

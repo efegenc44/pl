@@ -161,13 +161,33 @@ impl<'source> Parser<'source> {
     fn identifier(&mut self) -> ParseResult<Expression> {
         let identifier = self.expect_identifier()?;
         Ok(if self.next_peek_is(&Token::DoubleColon) {
+            let mut path = vec![identifier, self.expect_identifier()?];
+            while self.next_peek_is(&Token::DoubleColon) {
+                path.push(self.expect_identifier()?);
+            }
+
             Expression::Access {
-                from: identifier,
-                name: self.expect_identifier()?,
+                path,
                 namespace: Namespace::Undetermined,
             }
         } else {
             Expression::Identifier(identifier, Bound::None)
+        })
+    }
+
+    fn type_identifier(&mut self) -> ParseResult<TypeExpr> {
+        let identifier = self.expect_identifier()?;
+        Ok(if self.next_peek_is(&Token::DoubleColon) {
+            let mut path = vec![identifier, self.expect_identifier()?];
+            while self.next_peek_is(&Token::DoubleColon) {
+                path.push(self.expect_identifier()?);
+            }
+
+            TypeExpr::Access {
+                path,
+            }
+        } else {
+            TypeExpr::Identifier(identifier, Bound::None)
         })
     }
 
@@ -260,14 +280,7 @@ impl<'source> Parser<'source> {
         };
 
         match &peeked.data {
-            Token::Identifier(_) => {
-                let token = self.tokens.next().unwrap();
-                let symbol = token.data.to_string().into_boxed_str();
-                Ok(TypeExpr::Identifier(
-                    Spanned::new(symbol, token.span),
-                    Bound::None,
-                ))
-            }
+            Token::Identifier(_) => self.type_identifier(),
             Token::OpeningParenthesis => self.grouping(Self::type_expr),
             Token::KeywordFunc => self.func_type(),
             unexpected => Err(ParseError::UnexpectedToken(unexpected.clone()).attach(peeked.span)),

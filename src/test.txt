@@ -1,4 +1,3 @@
 import src::test2
 
-func wow("Hello": String) -> func(Integer) -> Integer = test2::abs
-func add(x: Integer, y: Integer) -> Integer = x
+func nat(x: test2::Nat) -> test2::Nat = test2::Nat::Succ(x)

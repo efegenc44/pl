@@ -79,20 +79,46 @@ impl TypeChecker {
             Expression::Lambda { params: _, body: _ } => {
                 todo!("Type Checking of Lambdas")
             },
-            Expression::Access { from, name, namespace } => {
-                match namespace {
-                    Namespace::Type => {
-                        let ret = self.interface.types[&from.data].clone();
-                        let params = self.interface.constructors[&from.data][&name.data].clone();
-                        Type::Function { params, ret: Box::new(ret) }
-                    }
-                    Namespace::Import => {
-                        let (params, ret) = self.interface.imports[&from.data].function_types[&name.data].clone();
-                        Type::Function { params, ret: Box::new(ret) }
-                    },
-                    Namespace::Undetermined => unreachable!(),
-                }
+            Expression::Access { path, namespace } => {
+                match &path[..] {
+                    [_] | [] => unreachable!(),
+                    [from, name] => {
+                        match namespace {
+                            Namespace::Type => {
+                                let ret = self.interface.types[&from.data].clone();
+                                let params = self.interface.constructors[&from.data][&name.data].clone();
+                                Type::Function { params, ret: Box::new(ret) }
+                            }
+                            Namespace::Import => {
+                                let (params, ret) = self.interface.imports[&from.data].function_types[&name.data].clone();
+                                Type::Function { params, ret: Box::new(ret) }
+                            },
+                            Namespace::Undetermined => unreachable!(),
+                        }
 
+                    }
+                    [modules@.., before, last] => {
+                        let from = &modules.first().unwrap();
+                        let mut current_import = &self.interface.imports[&from.data];
+
+                        for module in &modules[1..] {
+                            current_import = &current_import.imports[&module.data];
+                        }
+
+                        match namespace {
+                            Namespace::Type => {
+                                let ret = current_import.types[&before.data].clone();
+                                let params = current_import.constructors[&before.data][&last.data].clone();
+                                Type::Function { params, ret: Box::new(ret) }
+                            }
+                            Namespace::Import => {
+                                let (params, ret) = current_import.imports[&before.data].function_types[&last.data].clone();
+                                Type::Function { params, ret: Box::new(ret) }
+                            },
+                            Namespace::Undetermined => unreachable!(),
+                        }
+                    }
+                }
             },
         };
 
@@ -136,6 +162,24 @@ impl TypeChecker {
 
                 Type::Function { params, ret }
             },
+            TypeExpr::Access { path } => {
+                match &path[..] {
+                    [_] | [] => unreachable!(),
+                    [from, name] => {
+                        self.interface.imports[&from.data].types[&name.data].clone()
+                    }
+                    [modules@.., before, last] => {
+                        let from = &modules.first().unwrap();
+                        let mut current_import = &self.interface.imports[&from.data];
+
+                        for module in &modules[1..] {
+                            current_import = &current_import.imports[&module.data];
+                        }
+
+                        current_import.imports[&before.data].types[&last.data].clone()
+                    }
+                }
+            }
         }
     }
 
