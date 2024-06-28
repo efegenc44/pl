@@ -1,6 +1,8 @@
 use std::fmt::Display;
 
-#[derive(Clone, PartialEq, Eq)]
+use crate::frontend::token::Symbol;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Nothing,
     Integer,
@@ -9,7 +11,8 @@ pub enum Type {
     Function {
         params: Vec<Type>,
         ret: Box<Type>
-    }
+    },
+    Custom(Symbol),
 }
 
 impl Display for Type {
@@ -31,6 +34,7 @@ impl Display for Type {
                 write!(f, " -> ")?;
                 write!(f, "{ret}")
             },
+            Self::Custom(name) => write!(f, "{name}")
         }
     }
 }

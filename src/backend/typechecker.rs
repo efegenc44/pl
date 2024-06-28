@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, iter};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::{ast::{Bound, Expression, Pattern, TypeExpr}, module::{self, Function, Import, Module}, typ::{self, Type}};
+use super::{ast::{Bound, Expression, Namespace, Pattern, TypeExpr}, module::{self, Function, Import, Module}, typ::{self, Type}};
 
 pub struct  TypeChecker {
     interface: Interface,
@@ -11,15 +11,15 @@ pub struct  TypeChecker {
 
 impl TypeChecker {
     pub fn new() -> Self {
-        let primitive_types: HashMap<Symbol, Type> = HashMap::from([
-            ("Integer".into(), Type::Integer),
-            ("String".into(), Type::String),
-            ("Float".into(), Type::Float),
-            ("Nothing".into(), Type::Nothing),
-        ]);
+        // let primitive_types: HashMap<Symbol, Type> = HashMap::from([
+        //     ("Integer".into(), (Type::Integer)),
+        //     ("String".into(), Type::String),
+        //     ("Float".into(), Type::Float),
+        //     ("Nothing".into(), Type::Nothing),
+        // ]);
 
         Self {
-            interface: Interface { types: primitive_types, ..Default::default() },
+            interface: Interface::default(),
             locals: Vec::new(),
         }
     }
@@ -79,9 +79,20 @@ impl TypeChecker {
             Expression::Lambda { params: _, body: _ } => {
                 todo!("Type Checking of Lambdas")
             },
-            Expression::Access { module_name, name } => {
-                let (params, ret) = self.interface.imports[&module_name.data].function_types[&name.data].clone();
-                Type::Function { params, ret: Box::new(ret) }
+            Expression::Access { from, name, namespace } => {
+                match namespace {
+                    Namespace::Type => {
+                        let ret = self.interface.types[&from.data].clone();
+                        let params = self.interface.constructors[&from.data][&name.data].clone();
+                        Type::Function { params, ret: Box::new(ret) }
+                    }
+                    Namespace::Import => {
+                        let (params, ret) = self.interface.imports[&from.data].function_types[&name.data].clone();
+                        Type::Function { params, ret: Box::new(ret) }
+                    },
+                    Namespace::Undetermined => unreachable!(),
+                }
+
             },
         };
 
@@ -140,6 +151,20 @@ impl TypeChecker {
         Ok(())
     }
 
+    fn type_check_type(&mut self, typ: &module::Type) -> TypeCheckResult<()> {
+        let mut map = HashMap::new();
+        for (name, params) in &typ.consts {
+            let params = params
+                .iter()
+                .map(|param| self.eval_type_expr(param))
+                .collect();
+            map.insert(name.data.clone(), params);
+        }
+        self.interface.constructors.insert(typ.name.data.clone(), map);
+
+        Ok(())
+    }
+
     fn import_interface(&mut self, imports: &HashMap<Symbol, Import>) -> TypeCheckResult<()> {
         for (name, Import { parts, module }) in imports {
             let mut type_checker = Self::new();
@@ -166,7 +191,11 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn type_interface(&mut self, _types: &HashMap<Symbol, module::Type>) {}
+    fn type_interface(&mut self, types: &HashMap<Symbol, module::Type>) {
+        for module::Type { name, consts: _ } in types.values() {
+            self.interface.types.insert(name.data.clone(), Type::Custom(name.data.clone()));
+        }
+    }
 
     fn function_interface(&mut self, functions: &HashMap<Symbol, Function>) {
         for Function { name, params, body: _, ret } in functions.values() {
@@ -187,6 +216,10 @@ impl TypeChecker {
         self.import_interface(&module.imports)?;
         self.type_interface(&module.types);
         self.function_interface(&module.functions);
+
+        for typ in module.types.values() {
+            self.type_check_type(typ)?;
+        }
 
         for function in module.functions.values() {
             self.type_check_function(function)?;
@@ -234,5 +267,6 @@ pub struct Interface {
     function_types: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
     imports: HashMap<Symbol, Interface>,
     types: HashMap<Symbol, typ::Type>,
+    constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>
 }
 

@@ -1,2 +1,3 @@
-func sub(x: Integer, y: Integer) = nothing
-func abs(x: Integer) -> Integer = x
+type Nat = Zero | Succ(Nat)
+
+func nat(x: Nat) -> Nat = Nat::Succ(x)

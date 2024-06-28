@@ -22,10 +22,12 @@ pub enum Token {
     RightArrow,
     Colon,
     DoubleColon,
+    Bar,
     KeywordLet,
     KeywordIn,
     KeywordFunc,
     KeywordImport,
+    KeywordType,
     KeywordNothing,
 }
 
@@ -52,10 +54,12 @@ impl Display for Token {
             Self::RightArrow => write!(f, "->"),
             Self::Colon => write!(f, ":"),
             Self::DoubleColon => write!(f, "::"),
+            Self::Bar => write!(f, "|"),
             Self::KeywordLet => write!(f, "let"),
             Self::KeywordIn => write!(f, "in"),
             Self::KeywordFunc => write!(f, "func"),
             Self::KeywordImport => write!(f, "import"),
+            Self::KeywordType => write!(f, "type"),
             Self::KeywordNothing => write!(f, "nothing"),
         }
     }

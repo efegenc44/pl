@@ -15,7 +15,7 @@ impl Module {
     pub fn new(declarations: Vec<Declaration>) -> ModuleResult<Self> {
         let mut functions = HashMap::new();
         let mut imports = HashMap::new();
-        let types = HashMap::new();
+        let mut types = HashMap::new();
 
         for declaration in declarations {
             match declaration {
@@ -49,6 +49,13 @@ impl Module {
                     let module_name = parts.last().unwrap().data.clone();
                     imports.insert(module_name, Import { parts, module });
                 },
+                Declaration::Type { name, consts } => {
+                    if !types.contains_key(&name.data) {
+                        types.insert(name.data.clone(), Type { name, consts });
+                    } else {
+                        return Err(ModuleError::DuplicateDeclaration(name.data.clone()).attach(name.span))
+                    }
+                }
             }
         }
 
@@ -90,4 +97,6 @@ pub struct Import {
 }
 
 pub struct Type {
+    pub name: Spanned<Symbol>,
+    pub consts: Vec<(Spanned<Symbol>, Vec<TypeExpr>)>
 }

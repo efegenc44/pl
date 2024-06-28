@@ -1,6 +1,5 @@
 use std::{
-    collections::HashMap,
-    fmt::Display,
+    collections::{HashMap, HashSet}, fmt::Display
 };
 
 use crate::frontend::{
@@ -8,25 +7,29 @@ use crate::frontend::{
     token::Symbol,
 };
 
-use super::{ast::{Bound, Expression, Pattern, TypeExpr, TypedPattern}, module::{self, Function, Import, Module}};
+use super::{ast::{Bound, Expression, Namespace, Pattern, TypeExpr, TypedPattern}, module::{self, Function, Import, Module}};
 
 pub struct NameResolver {
-    module: Module,
     locals: Vec<Symbol>,
+    types: HashMap<Symbol, HashSet<Symbol>>,
+    functions: HashSet<Symbol>,
+    imports: HashMap<Symbol, Import>,
 }
 
 impl NameResolver {
     pub fn new() -> Self {
-        let primitive_types: HashMap<Symbol, module::Type> = HashMap::from([
-            ("Integer".into(), module::Type {}),
-            ("String".into(), module::Type {}),
-            ("Float".into(), module::Type {}),
-            ("Nothing".into(), module::Type {}),
-        ]);
+        // let _primitive_types: HashMap<Symbol, module::Type> = HashMap::from([
+        //     ("Integer".into(), module::Type {}),
+        //     ("String".into(), module::Type {}),
+        //     ("Float".into(), module::Type {}),
+        //     ("Nothing".into(), module::Type {}),
+        // ]);
 
         Self {
-            module: Module { types: primitive_types, ..Default::default() },
             locals: Vec::new(),
+            types: HashMap::new(),
+            functions: HashSet::new(),
+            imports: HashMap::new(),
         }
     }
 
@@ -42,7 +45,7 @@ impl NameResolver {
                 {
                     Expression::Identifier(identifier, Bound::Local(indice))
                 } else {
-                    let Some(_) = self.module.functions.get(&identifier.data) else {
+                    let true = self.functions.contains(&identifier.data) else {
                         return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
                     };
                     let name = identifier.data.clone();
@@ -84,17 +87,24 @@ impl NameResolver {
 
                 Expression::Lambda { params, body }
             }
-            Expression::Access { module_name, name } => {
-                let Some(import) = self.module.imports.get(&module_name.data) else {
-                    return Err(ResolutionError::NonExistantModule(module_name.data).attach(module_name.span))
-                };
+            Expression::Access { from, name, namespace: _ } => {
+                if let Some(import) = self.imports.get(&from.data) {
+                    let true = import.module.functions.contains_key(&name.data) else {
+                        let span = from.span.extend(name.span);
+                        return Err(ResolutionError::UnboundInModule { module_name: from.data, name: name.data }.attach(span))
+                    };
+                    Expression::Access { from, name, namespace: Namespace::Import }
+                } else if let Some(typ) = self.types.get(&from.data) {
+                    let true = typ.contains(&name.data) else {
+                        let span = from.span.extend(name.span);
+                        return Err(ResolutionError::UnboundInModule { module_name: from.data, name: name.data }.attach(span))
+                    };
+                    Expression::Access { from, name, namespace: Namespace::Type }
+                } else {
+                    return Err(ResolutionError::NonExistantModule(from.data).attach(from.span))
+                }
 
-                let Some(_) = import.module.functions.get(&name.data) else {
-                    let span = module_name.span.extend(name.span);
-                    return Err(ResolutionError::UnboundInModule { module_name: module_name.data, name: name.data }.attach(span))
-                };
 
-                Expression::Access { module_name, name }
             }
         };
 
@@ -105,7 +115,7 @@ impl NameResolver {
         let resolved_type_expr = match type_expr {
             // TODO: Local type variables for polyphormic types.
             TypeExpr::Identifier(identifier, _) => {
-                let Some(_) = self.module.types.get(&identifier.data) else {
+                let Some(_) = self.types.get(&identifier.data) else {
                     return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
                 };
                 let name = identifier.data.clone();
@@ -155,7 +165,21 @@ impl NameResolver {
         Ok(resolved_functions)
     }
 
-    fn resolve_imports(&self, imports: HashMap<Symbol, Import>) -> ResolutionResult<HashMap<Symbol, Import>> {
+    fn resolve_types(&mut self, types: HashMap<Symbol, module::Type>) -> ResolutionResult<HashMap<Symbol, module::Type>> {
+        let mut resolved_types = HashMap::new();
+        for (type_name, module::Type { name, consts }) in types {
+            let mut resolved_consts = vec![];
+            for (name, params) in consts {
+                let params = params.into_iter().map(|param| self.resolve_type_expr(param)).collect::<Result<Vec<_>, _>>()?;
+                resolved_consts.push((name, params));
+            }
+            resolved_types.insert(type_name, module::Type { name, consts: resolved_consts });
+        }
+
+        Ok(resolved_types)
+    }
+
+    fn resolve_imports(imports: HashMap<Symbol, Import>) -> ResolutionResult<HashMap<Symbol, Import>> {
         let mut resolved_imports = HashMap::new();
         for (name, Import { parts, module }) in imports {
             let module = NameResolver::new().resolve_module(module).map_err(|error| {
@@ -184,11 +208,15 @@ impl NameResolver {
     }
 
     pub fn resolve_module(mut self, module: Module) -> ResolutionResult<Module> {
-        self.module.imports = self.resolve_imports(module.imports)?;
-        // TODO: here resolve_types order is important.
-        self.module.functions = self.resolve_functions(module.functions)?;
+        for (type_name, module::Type { name: _, consts }) in &module.types {
+           self.types.insert(type_name.clone(), consts.iter().map(|(name, _ )| name.data.clone()).collect());
+        }
+        self.functions = module.functions.keys().cloned().collect();
+        self.imports = Self::resolve_imports(module.imports)?;
+        let types = self.resolve_types(module.types)?;
+        let functions = self.resolve_functions(module.functions)?;
 
-        Ok(self.module)
+        Ok(Module { functions, imports: self.imports, types })
     }
 
     fn push_names_in_pattern(&mut self, pattern: &Pattern) -> usize {

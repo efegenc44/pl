@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::read_to_string, iter::Peekable};
 
 use crate::{
     backend::ast::{
-        Bound, Declaration, Expression, Operator, Pattern, TypeExpr, TypedPattern,
+        Bound, Declaration, Expression, Namespace, Operator, Pattern, TypeExpr, TypedPattern
     },
     frontend::token::Token,
 };
@@ -162,8 +162,9 @@ impl<'source> Parser<'source> {
         let identifier = self.expect_identifier()?;
         Ok(if self.next_peek_is(&Token::DoubleColon) {
             Expression::Access {
-                module_name: identifier,
+                from: identifier,
                 name: self.expect_identifier()?,
+                namespace: Namespace::Undetermined,
             }
         } else {
             Expression::Identifier(identifier, Bound::None)
@@ -326,6 +327,29 @@ impl<'source> Parser<'source> {
         Ok(Declaration::Import { parts, import })
     }
 
+    fn type_constructor(&mut self) -> ParseResult<(Spanned<Symbol>, Vec<TypeExpr>)> {
+        let name = self.expect_identifier()?;
+        let params = if self.next_peek_is(&Token::OpeningParenthesis) {
+            self.comma_seperated_until(Self::type_expr, Token::ClosingParenthesis)?
+        } else {
+            vec![]
+        };
+
+        Ok((name, params))
+    }
+
+    fn typee(&mut self) -> ParseResult<Declaration> {
+        self.expect(Token::KeywordType)?;
+        let name = self.expect_identifier()?;
+        self.expect(Token::Equals)?;
+        let mut consts = vec![self.type_constructor()?];
+        while self.next_peek_is(&Token::Bar) {
+            consts.push(self.type_constructor()?);
+        }
+
+        Ok(Declaration::Type { name, consts })
+    }
+
     fn declaration(&mut self) -> ParseResult<Declaration> {
         let Some(peeked) = self.tokens.peek() else {
             return self.unexpected_eof()
@@ -334,6 +358,7 @@ impl<'source> Parser<'source> {
         match &peeked.data {
             Token::KeywordFunc => self.func(),
             Token::KeywordImport => self.import(),
+            Token::KeywordType => self.typee(),
             unexpected => Err(ParseError::UnexpectedToken(unexpected.clone()).attach(peeked.span)),
         }
     }

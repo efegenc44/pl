@@ -53,8 +53,9 @@ pub enum Expression {
         body: Box<Expression>,
     },
     Access {
-        module_name: Spanned<Symbol>,
+        from: Spanned<Symbol>,
         name: Spanned<Symbol>,
+        namespace: Namespace,
     },
 }
 
@@ -70,9 +71,16 @@ impl Expression {
             Self::Application { expr, args: _ } => expr.span(),
             Self::Let { pattern: _, typ: _, expr: _, body } => body.span(),
             Self::Lambda { params: _, body } => body.span(),
-            Self::Access { module_name, name } => module_name.span.extend(name.span),
+            Self::Access { from, name, namespace: _ } => from.span.extend(name.span),
         }
     }
+}
+
+#[derive(Debug)]
+pub enum Namespace {
+    Type,
+    Import,
+    Undetermined
 }
 
 #[derive(Debug)]
@@ -122,6 +130,10 @@ pub enum Declaration {
         parts: Vec<Spanned<Symbol>>,
         import: Vec<Declaration>,
     },
+    Type {
+        name: Spanned<Symbol>,
+        consts: Vec<(Spanned<Symbol>, Vec<TypeExpr>)>
+    }
 }
 
 #[derive(Debug)]
