@@ -121,7 +121,7 @@ impl<'source> Parser<'source> {
     fn lett(&mut self) -> ParseResult<Expression> {
         self.expect(Token::KeywordLet)?;
         let pattern = self.pattern()?;
-        let typ = self.optional(Self::type_expr, Token::Colon)?;
+        let type_expr = self.optional(Self::type_expr, Token::Colon)?;
         self.expect(Token::Equals)?;
         let expr = Box::new(self.expression()?);
         self.expect(Token::KeywordIn)?;
@@ -129,7 +129,7 @@ impl<'source> Parser<'source> {
 
         Ok(Expression::Let {
             pattern,
-            typ,
+            type_expr,
             expr,
             body,
         })

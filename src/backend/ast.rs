@@ -44,7 +44,7 @@ pub enum Expression {
     },
     Let {
         pattern: Pattern,
-        typ: Option<TypeExpr>,
+        type_expr: Option<TypeExpr>,
         expr: Box<Expression>,
         body: Box<Expression>,
     },
@@ -68,7 +68,7 @@ impl Expression {
             Self::Nothing(span) => *span,
             Self::Binary { lhs, op: _, rhs } => lhs.span().extend(rhs.span()),
             Self::Application { expr, args: _ } => expr.span(),
-            Self::Let { pattern: _, typ: _, expr: _, body } => body.span(),
+            Self::Let { pattern: _, type_expr: _, expr: _, body } => body.span(),
             Self::Lambda { params: _, body } => body.span(),
             Self::Access { path, namespace: _ } => path.first().unwrap().span.extend(path.last().unwrap().span),
         }
@@ -78,7 +78,7 @@ impl Expression {
 #[derive(Debug)]
 pub enum Namespace {
     Type,
-    Import,
+    Module,
     Undetermined
 }
 

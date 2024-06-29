@@ -33,12 +33,12 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    let resolved_module = match NameResolver::new().resolve_module(module) {
+    let resolved_module = match NameResolver::resolve_module(module) {
         Ok(resolved_module) => resolved_module,
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    if let Err(error) = TypeChecker::new().type_check_module(&resolved_module) {
+    if let Err(error) = TypeChecker::type_check_module(&resolved_module) {
         return error.report(file_path, &read_to_string(file_path)?)
     };
 
@@ -48,6 +48,9 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
 fn start_repl() -> io::Result<()> {
     let mut stdout = stdout();
     let stdin = stdin();
+    let module = Module::default();
+    let mut resolver = NameResolver::new(&module);
+    let mut type_checker = TypeChecker::new(&module);
 
     loop {
         write!(stdout, "> ")?;
@@ -71,7 +74,7 @@ fn start_repl() -> io::Result<()> {
             }
         };
 
-        let resolved_expression = match NameResolver::new().resolve_expr(expression) {
+        let resolved_expression = match resolver.resolve_expr(expression) {
             Ok(resolved_expression) => resolved_expression,
             Err(error) => {
                 error.report("REPL", input)?;
@@ -79,7 +82,7 @@ fn start_repl() -> io::Result<()> {
             }
         };
 
-        let typ = match TypeChecker::new().type_check_expr(&resolved_expression) {
+        let typ = match type_checker.type_check_expr(&resolved_expression) {
             Ok(typ) => typ,
             Err(error) => {
                 error.report("REPL", input)?;

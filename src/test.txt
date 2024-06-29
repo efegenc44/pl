@@ -1,3 +1,8 @@
 import src::test2
 
 func nat(x: test2::Nat) -> test2::Nat = test2::Nat::Succ(x)
+
+func foo(x: A) -> B = B::foo(x)
+
+type A = foo(B)
+type B = foo(A)
