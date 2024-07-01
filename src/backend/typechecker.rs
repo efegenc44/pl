@@ -106,7 +106,11 @@ impl TypeChecker {
                                 Type::Function { params, ret: Box::new(ret) }
                             }
                             Namespace::Module => {
-                                let (params, ret) = self.interface.imports[&from.data].functions[&name.data].clone();
+                                let ImportTypes::Module { functions, .. } = &self.interface.imports[&from.data] else {
+                                    unreachable!()
+                                };
+
+                                let (params, ret) = functions[&name.data].clone();
                                 Type::Function { params, ret: Box::new(ret) }
                             },
                             Namespace::Undetermined => unreachable!(),
@@ -118,17 +122,33 @@ impl TypeChecker {
                         let mut current_import = &self.interface.imports[&from.data];
 
                         for module in &modules[1..] {
-                            current_import = &current_import.modules[&module.data];
+                            let ImportTypes::Group(modules) = current_import else {
+                                unreachable!()
+                            };
+
+                            current_import = &modules[&module.data];
                         }
 
                         match namespace {
                             Namespace::Type => {
-                                let ret = current_import.types[&before.data].clone();
-                                let params = current_import.constructors[&before.data][&last.data].clone();
+                                let ImportTypes::Module { types, constructors, .. } = current_import else {
+                                    unreachable!()
+                                };
+
+                                let ret = types[&before.data].clone();
+                                let params = constructors[&before.data][&last.data].clone();
                                 Type::Function { params, ret: Box::new(ret) }
                             }
                             Namespace::Module => {
-                                let (params, ret) = current_import.modules[&before.data].functions[&last.data].clone();
+                                let ImportTypes::Group(modules) = current_import else {
+                                    unreachable!()
+                                };
+
+                                let ImportTypes::Module { functions, .. } = &modules[&before.data] else {
+                                    unreachable!()
+                                };
+
+                                let (params, ret) = functions[&last.data].clone();
                                 Type::Function { params, ret: Box::new(ret) }
                             },
                             Namespace::Undetermined => unreachable!(),
@@ -182,17 +202,33 @@ impl TypeChecker {
                 match &path[..] {
                     [_] | [] => unreachable!(),
                     [from, name] => {
-                        self.interface.imports[&from.data].types[&name.data].clone()
+                        let ImportTypes::Module { types, .. } = &self.interface.imports[&from.data] else {
+                            unreachable!()
+                        };
+
+                        types[&name.data].clone()
                     }
                     [modules@.., before, last] => {
                         let from = &modules.first().unwrap();
                         let mut current_import = &self.interface.imports[&from.data];
 
                         for module in &modules[1..] {
-                            current_import = &current_import.modules[&module.data];
+                            let ImportTypes::Group(modules) = current_import else {
+                                unreachable!()
+                            };
+
+                            current_import = &modules[&module.data];
                         }
 
-                        current_import.modules[&before.data].types[&last.data].clone()
+                        let ImportTypes::Group(modules) = current_import else {
+                            unreachable!()
+                        };
+
+                        let ImportTypes::Module { types, .. } = &modules[&before.data] else {
+                            unreachable!()
+                        };
+
+                        types[&last.data].clone()
                     }
                 }
             }
@@ -279,16 +315,15 @@ impl TypeChecker {
             match kind {
                 module::ImportKind::File(module) => {
                     let resolver = Self::new(&module);
-                    ImportTypes {
+                    ImportTypes::Module {
                         functions: resolver.interface.functions,
                         types: resolver.interface.types,
                         constructors: resolver.interface.constructors,
-                        modules: resolver.interface.modules,
                     }
                 },
                 module::ImportKind::Folder(imports) => {
                     let modules = imports.iter().map(|(name, import)| (name.clone(), Self::get_import_types(import))).collect();
-                    ImportTypes { modules, ..Default::default() }
+                    ImportTypes::Group(modules)
                 },
             }
     }
@@ -339,13 +374,13 @@ pub struct Interface {
     imports: HashMap<Symbol, ImportTypes>,
     types: HashMap<Symbol, typ::Type>,
     constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
-    modules: HashMap<Symbol, ImportTypes>,
 }
 
-#[derive(Default, Debug)]
-struct ImportTypes {
-    functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
-    types: HashMap<Symbol, typ::Type>,
-    constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
-    modules: HashMap<Symbol, ImportTypes>,
+enum ImportTypes {
+    Module {
+        functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
+        types: HashMap<Symbol, typ::Type>,
+        constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
+    },
+    Group(HashMap<Symbol, ImportTypes>)
 }
