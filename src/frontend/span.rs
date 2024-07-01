@@ -32,7 +32,7 @@ impl Display for Span {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Spanned<T> {
     pub data: T,
     pub span: Span,

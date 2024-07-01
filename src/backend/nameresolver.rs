@@ -40,20 +40,29 @@ impl NameResolver {
         let functions = module.functions.keys().cloned().collect();
 
         let imports = module.imports.iter().map(|(module_name, import)| {
-            (module_name.clone(), Self::collect_import_names(&import.module))
+            (module_name.clone(), Self::collect_import_names(&import))
         }).collect();
 
         Names { functions, imports, types, modules: Default::default() }
     }
 
-    fn collect_import_names(module: &Module) -> ImportNames {
-        let types = module.types.iter().map(|(type_name, typ)| {
-            (type_name.clone(), typ.consts.iter().map(|(name, _)| name.data.clone()).collect())
-        }).collect();
+    fn collect_import_names(import: &Import) -> ImportNames {
+        match &import.kind {
+            module::ImportKind::File(module) => {
+                let types = module.types.iter().map(|(type_name, typ)| {
+                    (type_name.clone(), typ.consts.iter().map(|(name, _)| name.data.clone()).collect())
+                }).collect();
 
-        let functions = module.functions.keys().cloned().collect();
+                let functions = module.functions.keys().cloned().collect();
 
-        ImportNames { functions, types, modules: Default::default() }
+                ImportNames { functions, types, modules: Default::default() }
+            },
+            module::ImportKind::Folder(imports) => {
+                let modules = imports.iter().map(|(name, import)| (name.clone(), Self::collect_import_names(import))).collect();
+                ImportNames { modules, ..Default::default() }
+            },
+        }
+
     }
 
     pub fn resolve_expr(&mut self, expr: Expression) -> ResolutionResult<Expression> {
@@ -273,27 +282,34 @@ impl NameResolver {
 
     fn resolve_imports(imports: HashMap<Symbol, Import>) -> ResolutionResult<HashMap<Symbol, Import>> {
         let mut resolved_imports = HashMap::new();
-        for (name, Import { parts, module }) in imports {
-            let module = NameResolver::resolve_module(module).map_err(|error| {
-                // TODO: Do not hardcode the file extension.
-                let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
-                    acc.push('\\');
-                    acc.push_str(&part.data);
-                    acc
-                }) + ".txt";
+        for (name, Import { parts, kind }) in imports {
+            match kind {
+                module::ImportKind::File(module) => {
+                    let module = NameResolver::resolve_module(module).map_err(|error| {
+                        // TODO: Do not hardcode the file extension.
+                        let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
+                            acc.push('\\');
+                            acc.push_str(&part.data);
+                            acc
+                        }) + ".txt";
 
-                let first = parts.first().unwrap().span;
-                let last = parts.last().unwrap().span;
-                let span = first.extend(last);
-                ResolutionError::ImportError {
-                    import_path: import_path.into(),
-                    error: Box::new(error),
-                }
-                .attach(span)
-            })?;
+                        let first = parts.first().unwrap().span;
+                        let last = parts.last().unwrap().span;
+                        let span = first.extend(last);
+                        ResolutionError::ImportError {
+                            import_path: import_path.into(),
+                            error: Box::new(error),
+                        }
+                        .attach(span)
+                    })?;
 
-            let resolved_import = Import { parts, module };
-            resolved_imports.insert(name, resolved_import);
+                    let resolved_import = Import { parts, kind: module::ImportKind::File(module) };
+                    resolved_imports.insert(name, resolved_import);
+                },
+                module::ImportKind::Folder(imports) => {
+                    resolved_imports.insert(name, Import { parts, kind: module::ImportKind::Folder(Self::resolve_imports(imports)?)});
+                },
+            }
         }
 
         Ok(resolved_imports)
@@ -315,10 +331,11 @@ struct Names {
     functions: HashSet<Symbol>,
     imports: HashMap<Symbol, ImportNames>,
     types: HashMap<Symbol, HashSet<Symbol>>,
-    #[allow(unused)] // TODO: implement modules.
+    #[allow(unused)]
     modules: HashMap<Symbol, ImportNames>,
 }
 
+#[derive(Default)]
 struct ImportNames {
     functions: HashSet<Symbol>,
     types: HashMap<Symbol, HashSet<Symbol>>,

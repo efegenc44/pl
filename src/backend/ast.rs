@@ -127,12 +127,17 @@ pub enum Declaration {
     },
     Import {
         parts: Vec<Spanned<Symbol>>,
-        import: Vec<Declaration>,
+        kind: ImportKind,
     },
     Type {
         name: Spanned<Symbol>,
         consts: Vec<(Spanned<Symbol>, Vec<TypeExpr>)>
     }
+}
+
+pub enum ImportKind {
+    File(Vec<Declaration>),
+    Folder(Vec<(Symbol, ImportKind)>)
 }
 
 #[derive(Debug)]

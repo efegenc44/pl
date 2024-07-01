@@ -1,8 +1,8 @@
-use std::{fmt::Display, fs::read_to_string, iter::Peekable};
+use std::{fmt::Display, fs::{read_dir, read_to_string}, iter::Peekable, path::PathBuf};
 
 use crate::{
     backend::ast::{
-        Bound, Declaration, Expression, Namespace, Operator, Pattern, TypeExpr, TypedPattern
+        Bound, Declaration, Expression, ImportKind, Namespace, Operator, Pattern, TypeExpr, TypedPattern
     },
     frontend::token::Token,
 };
@@ -314,30 +314,50 @@ impl<'source> Parser<'source> {
             parts.push(self.expect_identifier()?);
         }
 
-        // TODO: Do not hardcode the file extension.
-        let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
-            acc.push('\\');
-            acc.push_str(&part.data);
+        // TODO: imports should be relative to the file's position not the exe's position.
+        let import_path = parts.iter().fold(PathBuf::from("."), |mut acc, part| {
+            acc.push(&*part.data);
             acc
-        }) + ".txt";
+        });
 
-        // TODO: Remove unwrap.
-        let import_file = read_to_string(&import_path).unwrap();
-        let import =
-            Parser::new(Tokens::new(&import_file))
-                .declarations()
-                .map_err(|error| {
-                    let first = parts.first().unwrap().span;
-                    let last = parts.last().unwrap().span;
-                    let span = first.extend(last);
-                    ParseError::ImportError {
-                        import_path: import_path.clone().into(),
-                        error: Box::new(error),
-                    }
-                    .attach(span)
-                })?;
+        let kind = Self::parse_import(import_path, &parts)?;
+        Ok(Declaration::Import { parts, kind })
+    }
 
-        Ok(Declaration::Import { parts, import })
+    fn parse_import(mut import_path: PathBuf, parts: &[Spanned<Symbol>]) -> ParseResult<ImportKind> {
+        if import_path.is_dir() {
+            let mut imports = vec![];
+            for path in read_dir(import_path).unwrap() {
+                let mut path = path.unwrap().path();
+                let kind = Self::parse_import(path.clone(), parts)?;
+                path.set_extension("");
+                let name =  path.file_name().unwrap().to_str().unwrap().into();
+                imports.push((name, kind));
+            }
+
+            Ok(ImportKind::Folder(imports))
+        } else {
+            // TODO: Do not hardcode the file extension.
+            import_path.set_extension("txt");
+
+            // TODO: Remove unwrap.
+            let import_file = read_to_string(&import_path).unwrap();
+            let import =
+                Parser::new(Tokens::new(&import_file))
+                    .declarations()
+                    .map_err(|error| {
+                        let first = parts.first().unwrap().span;
+                        let last = parts.last().unwrap().span;
+                        let span = first.extend(last);
+                        ParseError::ImportError {
+                            import_path: import_path.into_os_string().into_string().unwrap().into_boxed_str(),
+                            error: Box::new(error),
+                        }
+                        .attach(span)
+                    })?;
+
+            Ok(ImportKind::File(import))
+        }
     }
 
     fn type_constructor(&mut self) -> ParseResult<(Spanned<Symbol>, Vec<TypeExpr>)> {

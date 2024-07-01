@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::ast::{Declaration, Expression, TypeExpr, TypedPattern};
+use super::ast::{self, Declaration, Expression, TypeExpr, TypedPattern};
 
 #[derive(Default)]
 pub struct Module {
@@ -26,28 +26,9 @@ impl Module {
                         return Err(ModuleError::DuplicateDeclaration(name.data.clone()).attach(name.span))
                     }
                 }
-                Declaration::Import { parts, import } => {
-                    let module = Module::new(import)
-                        .map_err(|error| {
-                            // TODO: Do not hardcode the file extension.
-                            let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
-                                acc.push('\\');
-                                acc.push_str(&part.data);
-                                acc
-                            }) + ".txt";
-
-                            let first = parts.first().unwrap().span;
-                            let last = parts.last().unwrap().span;
-                            let span = first.extend(last);
-                            ModuleError::ImportError {
-                                import_path: import_path.into(),
-                                error: Box::new(error),
-                            }
-                            .attach(span)
-                        })?;
-
+                Declaration::Import { parts, kind } => {
                     let module_name = parts.last().unwrap().data.clone();
-                    imports.insert(module_name, Import { parts, module });
+                    imports.insert(module_name, Import { kind: Self::import_kind(kind, &parts)?, parts });
                 },
                 Declaration::Type { name, consts } => {
                     if !types.contains_key(&name.data) {
@@ -60,6 +41,42 @@ impl Module {
         }
 
         Ok(Self { functions, imports, types })
+    }
+
+    fn import_kind(kind: ast::ImportKind, parts: &[Spanned<Symbol>]) -> ModuleResult<ImportKind> {
+        match kind {
+            ast::ImportKind::File(import) => {
+                let module = Module::new(import)
+                    .map_err(|error| {
+                        // TODO: Do not hardcode the file extension.
+                        let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
+                            acc.push('\\');
+                            acc.push_str(&part.data);
+                            acc
+                        }) + ".txt";
+
+                        let first = parts.first().unwrap().span;
+                        let last = parts.last().unwrap().span;
+                        let span = first.extend(last);
+                        ModuleError::ImportError {
+                            import_path: import_path.into(),
+                            error: Box::new(error),
+                        }
+                        .attach(span)
+                    })?;
+
+                Ok(ImportKind::File(module))
+            },
+            ast::ImportKind::Folder(imports) => {
+                let mut map = HashMap::new();
+                for (name, kind) in imports {
+                    let kind = Self::import_kind(kind, parts)?;
+                    map.insert(name, Import { parts: parts.to_vec(), kind });
+                }
+
+                Ok(ImportKind::Folder(map))
+            },
+        }
     }
 }
 
@@ -93,10 +110,15 @@ pub struct Function {
 
 pub struct Import {
     pub parts: Vec<Spanned<Symbol>>,
-    pub module: Module,
+    pub kind: ImportKind,
 }
 
 pub struct Type {
     pub name: Spanned<Symbol>,
     pub consts: Vec<(Spanned<Symbol>, Vec<TypeExpr>)>
+}
+
+pub enum ImportKind {
+    File(Module),
+    Folder(HashMap<Symbol, Import>)
 }

@@ -1,8 +1,14 @@
 import src::test2
+import src::testmodule
 
 func nat(x: test2::Nat) -> test2::Nat = test2::Nat::Succ(x)
 
 func foo(x: A) -> B = B::foo(x)
+
+func bar(x: testmodule::testfile::TestFileType) -> testmodule::testfile::TestFileType = testmodule::testfile::TestFileType::TestFileType()
+func super(
+    x: testmodule::innermodule::innerfile::InnerType
+) -> testmodule::innermodule::innerfile::InnerType = test2::abo(x)
 
 type A = foo(B)
 type B = foo(A)

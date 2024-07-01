@@ -29,7 +29,7 @@ impl TypeChecker {
         let mut type_checker = Self::new(module);
 
         for import in module.imports.values() {
-            type_checker.type_check_import(import)?;
+            Self::type_check_import(import)?;
         }
 
         for function in module.functions.values() {
@@ -100,6 +100,7 @@ impl TypeChecker {
                     [from, name] => {
                         match namespace {
                             Namespace::Type => {
+                                // TODO: If constructor does not take any arguments, does not return a function type
                                 let ret = self.interface.types[&from.data].clone();
                                 let params = self.interface.constructors[&from.data][&name.data].clone();
                                 Type::Function { params, ret: Box::new(ret) }
@@ -209,24 +210,35 @@ impl TypeChecker {
         self.expect_type(body, &ret)
     }
 
-    fn type_check_import(&mut self, Import { parts, module }: &Import) -> TypeCheckResult<Interface> {
-        Self::type_check_module(module).map_err(|error| {
-            // TODO: Do not hardcode the file extension.
-            let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
-                acc.push('\\');
-                acc.push_str(&part.data);
-                acc
-            }) + ".txt";
+    fn type_check_import(Import { parts, kind }: &Import) -> TypeCheckResult<()> {
+        match kind {
+            module::ImportKind::File(module) => {
+                Self::type_check_module(module).map_err(|error| {
+                    // TODO: Do not hardcode the file extension.
+                    let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
+                        acc.push('\\');
+                        acc.push_str(&part.data);
+                        acc
+                    }) + ".txt";
 
-            let first = parts.first().unwrap().span;
-            let last = parts.last().unwrap().span;
-            let span = first.extend(last);
-            TypeCheckError::ImportError {
-                import_path: import_path.into(),
-                error: Box::new(error),
-            }
-            .attach(span)
-        })
+                    let first = parts.first().unwrap().span;
+                    let last = parts.last().unwrap().span;
+                    let span = first.extend(last);
+                    TypeCheckError::ImportError {
+                        import_path: import_path.into(),
+                        error: Box::new(error),
+                    }
+                    .attach(span)
+                })?;
+            },
+            module::ImportKind::Folder(imports) => {
+                for (_, import) in imports {
+                    Self::type_check_import(import)?;
+                }
+            },
+        }
+
+        Ok(())
     }
 
     fn type_interface(&mut self, types: &HashMap<Symbol, module::Type>) {
@@ -263,18 +275,27 @@ impl TypeChecker {
         }
     }
 
+    fn get_import_types(Import { parts: _, kind }: &Import) -> ImportTypes {
+            match kind {
+                module::ImportKind::File(module) => {
+                    let resolver = Self::new(&module);
+                    ImportTypes {
+                        functions: resolver.interface.functions,
+                        types: resolver.interface.types,
+                        constructors: resolver.interface.constructors,
+                        modules: resolver.interface.modules,
+                    }
+                },
+                module::ImportKind::Folder(imports) => {
+                    let modules = imports.iter().map(|(name, import)| (name.clone(), Self::get_import_types(import))).collect();
+                    ImportTypes { modules, ..Default::default() }
+                },
+            }
+    }
+
     fn import_interface(&mut self, imports: &HashMap<Box<str>, Import>) {
-        for (name, Import { parts: _, module }) in imports {
-            let resolver = Self::new(&module);
-
-            let import_types = ImportTypes {
-                functions: resolver.interface.functions,
-                types: resolver.interface.types,
-                constructors: resolver.interface.constructors,
-                modules: resolver.interface.modules,
-            };
-
-            self.interface.imports.insert(name.clone(), import_types);
+        for (name, import) in imports {
+            self.interface.imports.insert(name.clone(), Self::get_import_types(import));
         }
     }
 }
@@ -321,6 +342,7 @@ pub struct Interface {
     modules: HashMap<Symbol, ImportTypes>,
 }
 
+#[derive(Default, Debug)]
 struct ImportTypes {
     functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
     types: HashMap<Symbol, typ::Type>,

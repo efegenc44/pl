@@ -1,3 +1,7 @@
+import src::testmodule::innermodule::innerfile
+
 type Nat = Zero | Succ(Nat)
 
 func nat(x: Nat) -> Nat = Nat::Succ(x)
+
+func abo(x: innerfile::InnerType) -> innerfile::InnerType = innerfile::InnerType::InnerType()
