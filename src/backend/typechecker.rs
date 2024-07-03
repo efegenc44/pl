@@ -40,125 +40,130 @@ impl TypeChecker {
     }
 
     pub fn type_check_expr(&mut self, expr: &Expression) -> TypeCheckResult<Type> {
-        let typ = match expr {
-            Expression::Identifier(_, bound) => {
-                match bound {
-                    Bound::Local(indice) => self.locals[self.locals.len() - 1 - indice].clone(),
-                    Bound::Global(identifier) => {
-                        let (params, ret) = self.interface.functions[identifier].clone();
-                        Type::Function { params, ret: Box::new(ret) }
-                    },
-                    Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
-                }
-            },
-            Expression::Integer(_) => Type::Integer,
-            Expression::Float(_) => Type::Float,
-            Expression::String(_) => Type::String,
-            Expression::Nothing(_) => Type::Nothing,
+        match expr {
+            Expression::Identifier(_, bound) => self.type_check_identifier(bound),
+            Expression::Integer(_) => Ok(Type::Integer),
+            Expression::Float(_) => Ok(Type::Float),
+            Expression::String(_) => Ok(Type::String),
+            Expression::Nothing(_) => Ok(Type::Nothing),
             Expression::Binary(Binary { lhs, op: _, rhs }) => {
                 self.type_check_expr(lhs)?;
                 self.type_check_expr(rhs)?;
                 todo!("Type Checking of Binary Exprssions");
             },
-            Expression::Application(Application { expr, args }) => {
-                let typ = self.type_check_expr(expr)?;
-                let Type::Function { params, ret } = typ else {
-                    return Err(TypeCheckError::ExpectedFunction(typ).attach(expr.span()))
-                };
-
-                if args.len() != params.len() {
-                    return Err(TypeCheckError::ArityMismatch { expected: params.len(), found: args.len() }.attach(expr.span()))
-                }
-
-                for (arg, param) in iter::zip(args, params) {
-                    self.expect_type(arg, &param)?;
-                }
-
-                *ret
-            },
-            Expression::Let(Let { pattern, type_expr, expr, body }) => {
-                let typ = if let Some(typ) = type_expr {
-                    let typ = self.eval_type_expr(typ);
-                    self.expect_type(expr, &typ)?;
-                    typ
-                } else {
-                    self.type_check_expr(expr)?
-                };
-
-                let local_count = self.push_types_in_pattern(pattern, typ)?;
-                let result = self.type_check_expr(body)?;
-                self.locals.truncate(self.locals.len() - local_count);
-
-                result
-            },
+            Expression::Application(application) => self.type_check_application(application),
+            Expression::Let(lett) => self.type_check_let(lett),
             Expression::Lambda(Lambda { params: _, body: _ }) => {
                 todo!("Type Checking of Lambdas")
             },
-            Expression::Access(Access { path, namespace }) => {
-                match &path[..] {
-                    [_] | [] => unreachable!(),
-                    [from, name] => {
-                        match namespace {
-                            Namespace::Type => {
-                                // TODO: If constructor does not take any arguments, does not return a function type
-                                let ret = self.interface.types[&from.data].clone();
-                                let params = self.interface.constructors[&from.data][&name.data].clone();
-                                Type::Function { params, ret: Box::new(ret) }
-                            }
-                            Namespace::Module => {
-                                let ImportTypes::Module { functions, .. } = &self.interface.imports[&from.data] else {
-                                    unreachable!()
-                                };
+            Expression::Access(access) => self.type_check_access(access),
+        }
+    }
 
-                                let (params, ret) = functions[&name.data].clone();
-                                Type::Function { params, ret: Box::new(ret) }
-                            },
-                            Namespace::Undetermined => unreachable!(),
-                        }
-
-                    }
-                    [modules@.., before, last] => {
-                        let from = &modules.first().unwrap();
-                        let mut current_import = &self.interface.imports[&from.data];
-
-                        for module in &modules[1..] {
-                            let ImportTypes::Group(modules) = current_import else {
-                                unreachable!()
-                            };
-
-                            current_import = &modules[&module.data];
-                        }
-
-                        match namespace {
-                            Namespace::Type => {
-                                let ImportTypes::Module { types, constructors, .. } = current_import else {
-                                    unreachable!()
-                                };
-
-                                let ret = types[&before.data].clone();
-                                let params = constructors[&before.data][&last.data].clone();
-                                Type::Function { params, ret: Box::new(ret) }
-                            }
-                            Namespace::Module => {
-                                let ImportTypes::Group(modules) = current_import else {
-                                    unreachable!()
-                                };
-
-                                let ImportTypes::Module { functions, .. } = &modules[&before.data] else {
-                                    unreachable!()
-                                };
-
-                                let (params, ret) = functions[&last.data].clone();
-                                Type::Function { params, ret: Box::new(ret) }
-                            },
-                            Namespace::Undetermined => unreachable!(),
-                        }
-                    }
-                }
+    fn type_check_identifier(&self, bound: &Bound) -> TypeCheckResult<Type> {
+        match bound {
+            Bound::Local(indice) => Ok(self.locals[self.locals.len() - 1 - indice].clone()),
+            Bound::Global(identifier) => {
+                let (params, ret) = self.interface.functions[identifier].clone();
+                Ok(Type::Function { params, ret: Box::new(ret) })
             },
+            Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
+        }
+    }
+
+    fn type_check_application(&mut self, Application { expr, args }: &Application) -> TypeCheckResult<Type> {
+        let typ = self.type_check_expr(expr)?;
+        let Type::Function { params, ret } = typ else {
+            return Err(TypeCheckError::ExpectedFunction(typ).attach(expr.span()))
         };
 
-        Ok(typ)
+        if args.len() != params.len() {
+            return Err(TypeCheckError::ArityMismatch { expected: params.len(), found: args.len() }.attach(expr.span()))
+        }
+
+        for (arg, param) in iter::zip(args, params) {
+            self.expect_type(arg, &param)?;
+        }
+
+        Ok(*ret)
+    }
+
+    fn type_check_let(&mut self, Let { pattern, type_expr, expr, body }: &Let) -> TypeCheckResult<Type> {
+        let typ = if let Some(typ) = type_expr {
+            let typ = self.eval_type_expr(typ);
+            self.expect_type(expr, &typ)?;
+            typ
+        } else {
+            self.type_check_expr(expr)?
+        };
+
+        let local_count = self.push_types_in_pattern(pattern, typ)?;
+        let result = self.type_check_expr(body)?;
+        self.locals.truncate(self.locals.len() - local_count);
+
+        Ok(result)
+    }
+
+    fn type_check_access(&mut self, Access { path, namespace }: &Access) -> TypeCheckResult<Type> {
+        match &path[..] {
+            [_] | [] => unreachable!(),
+            [from, name] => {
+                match namespace {
+                    Namespace::Type => {
+                        // TODO: If constructor does not take any arguments, does not return a function type
+                        let ret = self.interface.types[&from.data].clone();
+                        let params = self.interface.constructors[&from.data][&name.data].clone();
+                        Ok(Type::Function { params, ret: Box::new(ret) })
+                    }
+                    Namespace::Module => {
+                        let ImportTypes::Module { functions, .. } = &self.interface.imports[&from.data] else {
+                            unreachable!()
+                        };
+
+                        let (params, ret) = functions[&name.data].clone();
+                        Ok(Type::Function { params, ret: Box::new(ret) })
+                    },
+                    Namespace::Undetermined => unreachable!(),
+                }
+            }
+            [groups@.., from, name] => {
+                let first = &groups.first().unwrap();
+                let mut current_import = &self.interface.imports[&first.data];
+
+                for module in &groups[1..] {
+                    let ImportTypes::Group(modules) = current_import else {
+                        unreachable!()
+                    };
+
+                    current_import = &modules[&module.data];
+                }
+
+                match namespace {
+                    Namespace::Type => {
+                        let ImportTypes::Module { types, constructors, .. } = current_import else {
+                            unreachable!()
+                        };
+
+                        let ret = types[&from.data].clone();
+                        let params = constructors[&from.data][&name.data].clone();
+                        Ok(Type::Function { params, ret: Box::new(ret) })
+                    }
+                    Namespace::Module => {
+                        let ImportTypes::Group(modules) = current_import else {
+                            unreachable!()
+                        };
+
+                        let ImportTypes::Module { functions, .. } = &modules[&from.data] else {
+                            unreachable!()
+                        };
+
+                        let (params, ret) = functions[&name.data].clone();
+                        Ok(Type::Function { params, ret: Box::new(ret) })
+                    },
+                    Namespace::Undetermined => unreachable!(),
+                }
+            }
+        }
     }
 
     fn push_types_in_pattern(&mut self, pattern: &Pattern, typ: Type) -> TypeCheckResult<usize> {
