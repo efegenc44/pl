@@ -2,12 +2,15 @@ use std::{
     collections::{HashMap, HashSet}, fmt::Display
 };
 
-use crate::frontend::{
+use crate::{backend::ast::Binary, frontend::{
     span::{HasSpan, Spanned},
     token::Symbol,
-};
+}};
 
-use super::{ast::{Bound, Expression, Namespace, Pattern, TypeExpr, TypedPattern}, module::{self, Function, Import, Module}};
+use super::{
+    ast::{Access, Application, Bound, Expression, TypeFunction, Lambda, Let, Namespace, Pattern, TypeExpression, TypedPattern},
+    module::{self, Function, Import, Module}
+};
 
 pub struct NameResolver {
     names: Names,
@@ -67,208 +70,205 @@ impl NameResolver {
     }
 
     pub fn resolve_expr(&mut self, expr: Expression) -> ResolutionResult<Expression> {
-        let resolved_expr = match expr {
-            Expression::Integer(_) | Expression::Float(_) | Expression::String(_) | Expression::Nothing(_) => expr,
-            Expression::Identifier(identifier, _) => {
-                if let Some(indice) = self
-                    .locals
-                    .iter()
-                    .rev()
-                    .position(|local| local == &identifier.data)
-                {
-                    Expression::Identifier(identifier, Bound::Local(indice))
-                } else {
-                    let true = self.names.functions.contains(&identifier.data) else {
-                        return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
-                    };
-                    let name = identifier.data.clone();
-                    Expression::Identifier(identifier, Bound::Global(name))
-                }
-            }
-            Expression::Binary { lhs, op, rhs } => Expression::Binary {
-                lhs: Box::new(self.resolve_expr(*lhs)?),
-                op,
-                rhs: Box::new(self.resolve_expr(*rhs)?),
-            },
-            Expression::Application { expr, args } => Expression::Application {
-                expr: Box::new(self.resolve_expr(*expr)?),
-                args: args
-                    .into_iter()
-                    .map(|arg| self.resolve_expr(arg))
-                    .collect::<Result<_, _>>()?,
-            },
-            Expression::Let { pattern, type_expr, expr, body } => {
-                let expr = Box::new(self.resolve_expr(*expr)?);
-                let type_expr = type_expr.map(|type_expr| self.resolve_type_expr(type_expr)).transpose()?;
-                let local_count = self.push_names_in_pattern(&pattern);
-                let body = Box::new(self.resolve_expr(*body)?);
-                self.locals.truncate(self.locals.len() - local_count);
-
-                Expression::Let { pattern, type_expr, expr, body }
-            }
-            Expression::Lambda { params, body } => {
-                let local_count = params
-                    .iter()
-                    .map(|param| self.push_names_in_pattern(param))
-                    .sum::<usize>();
-                let body = Box::new(self.resolve_expr(*body)?);
-                self.locals.truncate(self.locals.len() - local_count);
-
-                Expression::Lambda { params, body }
-            }
-            // TODO: Better error reporting here.
-            Expression::Access { path, .. } => {
-                match &path[..] {
-                    [_] | [] => unreachable!(),
-                    [from, name] => {
-                        if let Some(import) = self.names.imports.get(&from.data) {
-                            let ImportNames::Module { functions, .. } = import else {
-                                return Err(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))
-                            };
-
-                            if !functions.contains(&name.data) {
-                                return Err(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))
-                            };
-
-                            Expression::Access { path, namespace: Namespace::Module }
-                        } else if let Some(typ) = self.names.types.get(&from.data) {
-                            if !typ.contains(&name.data) {
-                                return Err(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))
-                            };
-
-                            Expression::Access { path, namespace: Namespace::Type }
-                        } else {
-                            return Err(ResolutionError::NonExistantModule(from.data.clone()).attach(from.span))
-                        }
-                    },
-                    // In this case modules.len() >= 1 and they have to refer to a module group.
-                    [modules@.., before, last] => {
-                        let from = &modules.first().unwrap();
-                        let Some(mut current_import) = self.names.imports.get(&from.data) else {
-                            return Err(ResolutionError::NonExistantModule(from.data.clone()).attach(from.span))
-                        };
-
-                        for module in &modules[1..] {
-                            let ImportNames::Group(modules) = current_import else {
-                                return Err(ResolutionError::NonExistantModule(module.data.clone()).attach(module.span))
-                            };
-
-                            let Some(import) = modules.get(&module.data) else {
-                                return Err(ResolutionError::NonExistantModule(module.data.clone()).attach(module.span))
-                            };
-
-                            current_import = import;
-                        }
-
-                        match current_import {
-                            ImportNames::Module { types, .. } => {
-                                let Some(typ) = types.get(&before.data) else {
-                                    return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(last.span))
-                                };
-
-                                if !typ.contains(&last.data) {
-                                    return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(last.span))
-                                };
-
-                                Expression::Access { path, namespace: Namespace::Type }
-                            }
-                            ImportNames::Group(modules) => {
-                                let Some(ImportNames::Module { functions, .. }) = modules.get(&before.data) else {
-                                    return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(last.span))
-                                };
-
-                                if !functions.contains(&last.data) {
-                                    return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(last.span))
-                                };
-
-                                Expression::Access { path, namespace: Namespace::Module }
-                            }
-                        }
-                    },
-                }
-            }
-        };
-
-        Ok(resolved_expr)
+        match expr {
+            Expression::Identifier(identifier, _) => self.resolve_identifier(identifier),
+            Expression::Binary(binary) => self.resolve_binary(binary),
+            Expression::Application(application) => self.resolve_application(application),
+            Expression::Let(lett) => self.resolve_let(lett),
+            Expression::Lambda(lambda) => self.resolve_lambda(lambda),
+            Expression::Access(access) => self.resolve_access(access),
+            literal => Ok(literal),
+        }
     }
 
-    fn resolve_type_expr(&mut self, type_expr: TypeExpr) -> ResolutionResult<TypeExpr> {
-        let resolved_type_expr = match type_expr {
-            // TODO: Local type variables for polymorphic types.
-            TypeExpr::Identifier(identifier, _) => {
-                let Some(_) = self.names.types.get(&identifier.data) else {
-                    return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
-                };
-                let name = identifier.data.clone();
-                TypeExpr::Identifier(identifier, Bound::Global(name))
-            }
-            TypeExpr::Function { params, ret } => TypeExpr::Function {
-                ret: Box::new(self.resolve_type_expr(*ret)?),
-                params: params
-                    .into_iter()
-                    .map(|arg| self.resolve_type_expr(arg))
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
-            TypeExpr::Access { path } => {
-                match &path[..] {
-                    [_] | [] => unreachable!(),
-                    [from, name] => {
-                        let Some(import) = self.names.imports.get(&from.data) else {
-                            return Err(ResolutionError::NonExistantModule(from.data.clone()).attach(from.span))
-                        };
-
-                        let ImportNames::Module { types, .. } = import else {
-                            return Err(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))
-                        };
-
-                        if !types.contains_key(&name.data) {
-                            return Err(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))
-                        };
-
-                        TypeExpr::Access { path }
-                    },
-                    // In this case modules.len() >= 1 and they have to refer to a module.
-                    [modules@.., before, last] => {
-                        let from = &modules.first().unwrap();
-                        let Some(mut current_import) = self.names.imports.get(&from.data) else {
-                            return Err(ResolutionError::NonExistantModule(from.data.clone()).attach(from.span))
-                        };
-
-                        for module in &modules[1..] {
-                            let ImportNames::Group(modules) = current_import else {
-                                return Err(ResolutionError::NonExistantModule(module.data.clone()).attach(module.span))
-                            };
-
-                            let Some(import) = modules.get(&module.data) else {
-                                return Err(ResolutionError::NonExistantModule(module.data.clone()).attach(module.span))
-                            };
-
-                            current_import = import;
-                        }
-
-                        let ImportNames::Group(modules) = current_import else {
-                            return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(last.span))
-                        };
-
-                        let Some(import) = modules.get(&before.data) else {
-                            return Err(ResolutionError::NonExistantModule(before.data.clone()).attach(before.span))
-                        };
-
-                        let ImportNames::Module { types, .. } = import else {
-                            return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(last.span))
-                        };
-
-                        if !types.contains_key(&last.data) {
-                            return Err(ResolutionError::UnboundInModule { module_name: before.data.clone(), name: last.data.clone() }.attach(last.span))
-                        };
-
-                        TypeExpr::Access { path }
-                    },
-                }
-            }
+    fn resolve_identifier(&mut self, identifier: Spanned<Symbol>) -> ResolutionResult<Expression> {
+        let bound = if let Some(indice) = self.locals.iter().rev().position(|local| local == &identifier.data) {
+            Bound::Local(indice)
+        } else if self.names.functions.contains(&identifier.data) {
+            Bound::Global(identifier.data.clone())
+        } else {
+            return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
 
-        Ok(resolved_type_expr)
+        Ok(Expression::Identifier(identifier, bound))
+    }
+
+    fn resolve_binary(&mut self, Binary { lhs, op, rhs }: Binary) -> ResolutionResult<Expression> {
+        let lhs = Box::new(self.resolve_expr(*lhs)?);
+        let rhs = Box::new(self.resolve_expr(*rhs)?);
+
+        Ok(Expression::Binary(Binary { lhs, op, rhs }))
+    }
+
+    fn resolve_application(&mut self, Application { expr, args }: Application) -> ResolutionResult<Expression> {
+        let expr = Box::new(self.resolve_expr(*expr)?);
+        let args = args
+            .into_iter()
+            .map(|arg| self.resolve_expr(arg))
+            .collect::<Result<_, _>>()?;
+
+        Ok(Expression::Application(Application { expr, args }))
+    }
+
+    fn resolve_let(&mut self, Let { pattern, type_expr, expr, body }: Let) ->  ResolutionResult<Expression> {
+        let expr = Box::new(self.resolve_expr(*expr)?);
+        let type_expr = type_expr.map(|type_expr| self.resolve_type_expr(type_expr)).transpose()?;
+        let local_count = self.push_names_in_pattern(&pattern);
+        let body = Box::new(self.resolve_expr(*body)?);
+        self.locals.truncate(self.locals.len() - local_count);
+
+        Ok(Expression::Let(Let { pattern, type_expr, expr, body }))
+    }
+
+    fn resolve_lambda(&mut self, Lambda { params, body }: Lambda) -> ResolutionResult<Expression> {
+        let local_count = params
+            .iter()
+            .map(|param| self.push_names_in_pattern(param))
+            .sum::<usize>();
+        let body = Box::new(self.resolve_expr(*body)?);
+        self.locals.truncate(self.locals.len() - local_count);
+
+        Ok(Expression::Lambda(Lambda { params, body }))
+    }
+
+    // TODO: Better error reporting here.
+    fn resolve_access(&mut self, Access { path, .. }: Access) -> ResolutionResult<Expression> {
+        let namespace = match &path[..] {
+            [_] | [] => unreachable!(),
+            [from, name] => {
+                if let Some(import) = self.names.imports.get(&from.data) {
+                    import
+                        .as_module()
+                        .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                        .0
+                        .contains(&name.data)
+                        .then_some(Namespace::Module)
+                        .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+
+                } else if let Some(typ) = self.names.types.get(&from.data) {
+                    typ
+                        .contains(&name.data)
+                        .then_some(Namespace::Type)
+                        .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                } else {
+                    return Err(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))
+                }
+            },
+            // In this case groups.len() >= 1 and they have to refer to a module group.
+            [groups@.., from, name] => {
+                let first = &groups.first().unwrap();
+                let mut current_import = self.names.imports
+                    .get(&first.data)
+                    .ok_or(ResolutionError::NonExistantNamespace(first.data.clone()).attach(first.span))?;
+
+                for module in &groups[1..] {
+                    current_import = current_import
+                        .as_group()
+                        .ok_or(ResolutionError::NonExistantNamespace(module.data.clone()).attach(module.span))?
+                        .get(&module.data)
+                        .ok_or(ResolutionError::NonExistantNamespace(module.data.clone()).attach(module.span))?;
+                }
+
+                match current_import {
+                    // If the current is a 'Module', before should be a 'Type' and we should access to a constructor.
+                    ImportNames::Module { types, .. } => {
+                        types.get(&from.data)
+                            .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                            .contains(&name.data)
+                            .then_some(Namespace::Type)
+                            .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                    }
+                    // If the current is a 'Group', before should be a 'Module' and we should access to a function.
+                    ImportNames::Group(modules) => {
+                        modules.get(&from.data)
+                            .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?
+                            .as_module()
+                            .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                            .0
+                            .contains(&name.data)
+                            .then_some(Namespace::Module)
+                            .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                    }
+                }
+            },
+        };
+
+        Ok(Expression::Access(Access { path, namespace }))
+    }
+
+    fn resolve_type_expr(&mut self, type_expr: TypeExpression) -> ResolutionResult<TypeExpression> {
+        match type_expr {
+            TypeExpression::Identifier(identifier, _) => self.resolve_type_identifier(identifier),
+            TypeExpression::Function(type_function) => self.resolve_type_function(type_function),
+            TypeExpression::Access(path) => self.resolve_type_access(path),
+        }
+    }
+
+    fn resolve_type_identifier(&self, identifier: Spanned<Symbol>) -> ResolutionResult<TypeExpression> {
+        // TODO: Local type variables for polymorphic types.
+        let bound = if self.names.types.contains_key(&identifier.data) {
+            Bound::Global(identifier.data.clone())
+        } else {
+            return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
+        };
+
+        Ok(TypeExpression::Identifier(identifier, bound))
+    }
+
+    fn resolve_type_function(&mut self, TypeFunction { params, ret }: TypeFunction) -> ResolutionResult<TypeExpression> {
+        let ret = Box::new(self.resolve_type_expr(*ret)?);
+        let params = params
+            .into_iter()
+            .map(|arg| self.resolve_type_expr(arg))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(TypeExpression::Function(TypeFunction { ret, params }))
+    }
+
+    fn resolve_type_access(&self, path: Vec<Spanned<Symbol>>) -> ResolutionResult<TypeExpression> {
+        match &path[..] {
+            [_] | [] => unreachable!(),
+            [from, name] => {
+                self.names.imports
+                    .get(&from.data)
+                    .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?
+                    .as_module()
+                    .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                    .1
+                    .contains_key(&name.data)
+                    .then_some(())
+                    .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?;
+            },
+            // In this case modules.len() >= 1 and they have to refer to a module.
+            [modules@.., from, name] => {
+                let first = &modules.first().unwrap();
+                let mut current_import = self.names.imports
+                    .get(&first.data)
+                    .ok_or(ResolutionError::NonExistantNamespace(first.data.clone()).attach(first.span))?;
+
+                for module in &modules[1..] {
+                    current_import = current_import
+                        .as_group()
+                        .ok_or(ResolutionError::NonExistantNamespace(module.data.clone()).attach(module.span))?
+                        .get(&module.data)
+                        .ok_or(ResolutionError::NonExistantNamespace(module.data.clone()).attach(module.span))?;
+                }
+
+                current_import
+                    .as_group()
+                    .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                    .get(&from.data)
+                    .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?
+                    .as_module()
+                    .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
+                    .1
+                    .contains_key(&name.data)
+                    .then_some(())
+                    .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?;
+            }
+        }
+
+        Ok(TypeExpression::Access(path))
     }
 
     fn resolve_function(&mut self, Function { name, params, body, ret }: Function) -> ResolutionResult<Function> {
@@ -373,10 +373,28 @@ enum ImportNames {
     Group(HashMap<Symbol, ImportNames>)
 }
 
+impl ImportNames {
+    fn as_group(&self) -> Option<&HashMap<Symbol, ImportNames>> {
+        if let Self::Group(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    fn as_module(&self) -> Option<(&HashSet<Symbol>, &HashMap<Symbol, HashSet<Symbol>>)> {
+        if let Self::Module { functions, types } = self {
+            Some((functions, types))
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ResolutionError {
     UnboundIdentifier(Symbol),
-    NonExistantModule(Symbol),
+    NonExistantNamespace(Symbol),
     UnboundInModule {
         module_name: Symbol,
         name: Symbol,
@@ -391,7 +409,7 @@ impl Display for ResolutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnboundIdentifier(identifier) => write!(f, "`{identifier}` is not bound."),
-            Self::NonExistantModule(module) => write!(f, "Module `{module}` does not exist."),
+            Self::NonExistantNamespace(module) => write!(f, "Namespace `{module}` does not exist."),
             Self::UnboundInModule { module_name, name } => {
                 write!(f, "`{name}` is not bound in module `{module_name}`.")
             }

@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, iter};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::{ast::{Bound, Expression, Namespace, Pattern, TypeExpr}, module::{self, Function, Import, Module}, typ::{self, Type}};
+use super::{ast::{Access, Application, Binary, Bound, Expression, TypeFunction, Lambda, Let, Namespace, Pattern, TypeExpression}, module::{self, Function, Import, Module}, typ::{self, Type}};
 
 pub struct  TypeChecker {
     interface: Interface,
@@ -55,12 +55,12 @@ impl TypeChecker {
             Expression::Float(_) => Type::Float,
             Expression::String(_) => Type::String,
             Expression::Nothing(_) => Type::Nothing,
-            Expression::Binary { lhs, op: _, rhs } => {
+            Expression::Binary(Binary { lhs, op: _, rhs }) => {
                 self.type_check_expr(lhs)?;
                 self.type_check_expr(rhs)?;
                 todo!("Type Checking of Binary Exprssions");
             },
-            Expression::Application { expr, args } => {
+            Expression::Application(Application { expr, args }) => {
                 let typ = self.type_check_expr(expr)?;
                 let Type::Function { params, ret } = typ else {
                     return Err(TypeCheckError::ExpectedFunction(typ).attach(expr.span()))
@@ -76,7 +76,7 @@ impl TypeChecker {
 
                 *ret
             },
-            Expression::Let { pattern, type_expr, expr, body } => {
+            Expression::Let(Let { pattern, type_expr, expr, body }) => {
                 let typ = if let Some(typ) = type_expr {
                     let typ = self.eval_type_expr(typ);
                     self.expect_type(expr, &typ)?;
@@ -91,10 +91,10 @@ impl TypeChecker {
 
                 result
             },
-            Expression::Lambda { params: _, body: _ } => {
+            Expression::Lambda(Lambda { params: _, body: _ }) => {
                 todo!("Type Checking of Lambdas")
             },
-            Expression::Access { path, namespace } => {
+            Expression::Access(Access { path, namespace }) => {
                 match &path[..] {
                     [_] | [] => unreachable!(),
                     [from, name] => {
@@ -183,22 +183,22 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn eval_type_expr(&mut self, type_expr: &TypeExpr) -> Type {
+    fn eval_type_expr(&mut self, type_expr: &TypeExpression) -> Type {
         match type_expr {
-            TypeExpr::Identifier(_, bound) => {
+            TypeExpression::Identifier(_, bound) => {
                 match bound {
                     Bound::Local(_indice) => todo!("Local Type Variables"),
                     Bound::Global(identifier) => self.interface.types[identifier].clone(),
                     Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
                 }
             },
-            TypeExpr::Function { params, ret } => {
+            TypeExpression::Function(TypeFunction { params, ret }) => {
                 let params = params.iter().map(|param| self.eval_type_expr(param)).collect();
                 let ret = Box::new(self.eval_type_expr(ret));
 
                 Type::Function { params, ret }
             },
-            TypeExpr::Access { path } => {
+            TypeExpression::Access(path) => {
                 match &path[..] {
                     [_] | [] => unreachable!(),
                     [from, name] => {

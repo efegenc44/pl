@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::ast::{self, Declaration, Expression, TypeExpr, TypedPattern};
+use super::ast::{self, Declaration, Expression, TypeExpression, TypedPattern};
 
 #[derive(Default)]
 pub struct Module {
@@ -105,7 +105,7 @@ pub struct Function {
     pub name: Spanned<Symbol>,
     pub params: Vec<TypedPattern>,
     pub body: Expression,
-    pub ret: Option<TypeExpr>,
+    pub ret: Option<TypeExpression>,
 }
 
 pub struct Import {
@@ -115,7 +115,7 @@ pub struct Import {
 
 pub struct Type {
     pub name: Spanned<Symbol>,
-    pub consts: Vec<(Spanned<Symbol>, Vec<TypeExpr>)>
+    pub consts: Vec<(Spanned<Symbol>, Vec<TypeExpression>)>
 }
 
 pub enum ImportKind {

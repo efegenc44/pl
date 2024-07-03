@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::{read_dir, read_to_string}, iter::Peekable, path::Pa
 
 use crate::{
     backend::ast::{
-        Bound, Declaration, Expression, ImportKind, Namespace, Operator, Pattern, TypeExpr, TypedPattern
+        Access, Application, Binary, Bound, Declaration, Expression, TypeFunction, ImportKind, Lambda, Let, Namespace, Operator, Pattern, TypeExpression, TypedPattern
     },
     frontend::token::Token,
 };
@@ -127,12 +127,12 @@ impl<'source> Parser<'source> {
         self.expect(Token::KeywordIn)?;
         let body = Box::new(self.expression()?);
 
-        Ok(Expression::Let {
+        Ok(Expression::Let(Let {
             pattern,
             type_expr,
             expr,
             body,
-        })
+        }))
     }
 
     fn lambda(&mut self) -> ParseResult<Expression> {
@@ -140,7 +140,7 @@ impl<'source> Parser<'source> {
         let params = self.comma_seperated_until(Self::pattern, Token::RightArrow)?;
         let body = Box::new(self.expression()?);
 
-        Ok(Expression::Lambda { params, body })
+        Ok(Expression::Lambda(Lambda { params, body }))
     }
 
     fn pattern(&mut self) -> ParseResult<Pattern> {
@@ -166,16 +166,16 @@ impl<'source> Parser<'source> {
                 path.push(self.expect_identifier()?);
             }
 
-            Expression::Access {
+            Expression::Access(Access {
                 path,
                 namespace: Namespace::Undetermined,
-            }
+            })
         } else {
             Expression::Identifier(identifier, Bound::None)
         })
     }
 
-    fn type_identifier(&mut self) -> ParseResult<TypeExpr> {
+    fn type_identifier(&mut self) -> ParseResult<TypeExpression> {
         let identifier = self.expect_identifier()?;
         Ok(if self.next_peek_is(&Token::DoubleColon) {
             let mut path = vec![identifier, self.expect_identifier()?];
@@ -183,11 +183,9 @@ impl<'source> Parser<'source> {
                 path.push(self.expect_identifier()?);
             }
 
-            TypeExpr::Access {
-                path,
-            }
+            TypeExpression::Access(path)
         } else {
-            TypeExpr::Identifier(identifier, Bound::None)
+            TypeExpression::Identifier(identifier, Bound::None)
         })
     }
 
@@ -213,10 +211,10 @@ impl<'source> Parser<'source> {
         let mut expr = self.primary()?;
 
         while self.next_peek_is(&Token::OpeningParenthesis) {
-            expr = Expression::Application {
+            expr = Expression::Application(Application {
                 expr: Box::new(expr),
                 args: self.comma_seperated_until(Self::expression, Token::ClosingParenthesis)?,
-            };
+            });
         }
 
         Ok(expr)
@@ -246,11 +244,11 @@ impl<'source> Parser<'source> {
 
             let rhs = self.binary(op_precedence + usize::from(assoc != &Associativity::Right))?;
 
-            lhs = Expression::Binary {
+            lhs = Expression::Binary(Binary {
                 lhs: Box::new(lhs),
                 op,
                 rhs: Box::new(rhs),
-            };
+            });
 
             if assoc == &Associativity::None {
                 break;
@@ -264,17 +262,17 @@ impl<'source> Parser<'source> {
         self.binary(0)
     }
 
-    fn func_type(&mut self) -> ParseResult<TypeExpr> {
+    fn func_type(&mut self) -> ParseResult<TypeExpression> {
         self.expect(Token::KeywordFunc)?;
         self.expect(Token::OpeningParenthesis)?;
         let params = self.comma_seperated_until(Self::type_expr, Token::ClosingParenthesis)?;
         self.expect(Token::RightArrow)?;
         let ret = Box::new(self.type_expr()?);
 
-        Ok(TypeExpr::Function { params, ret })
+        Ok(TypeExpression::Function(TypeFunction { params, ret }))
     }
 
-    fn type_expr(&mut self) -> ParseResult<TypeExpr> {
+    fn type_expr(&mut self) -> ParseResult<TypeExpression> {
         let Some(peeked) = self.tokens.peek() else {
             return self.unexpected_eof()
         };
@@ -360,7 +358,7 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn type_constructor(&mut self) -> ParseResult<(Spanned<Symbol>, Vec<TypeExpr>)> {
+    fn type_constructor(&mut self) -> ParseResult<(Spanned<Symbol>, Vec<TypeExpression>)> {
         let name = self.expect_identifier()?;
         let params = if self.next_peek_is(&Token::OpeningParenthesis) {
             self.comma_seperated_until(Self::type_expr, Token::ClosingParenthesis)?

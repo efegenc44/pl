@@ -27,35 +27,50 @@ impl Display for Operator {
 }
 
 #[derive(Debug)]
+pub struct Binary {
+    pub lhs: Box<Expression>,
+    pub op: Operator,
+    pub rhs: Box<Expression>,
+}
+
+#[derive(Debug)]
+pub struct Application {
+    pub expr: Box<Expression>,
+    pub args: Vec<Expression>,
+}
+
+#[derive(Debug)]
+pub struct Let {
+    pub pattern: Pattern,
+    pub type_expr: Option<TypeExpression>,
+    pub expr: Box<Expression>,
+    pub body: Box<Expression>,
+}
+
+#[derive(Debug)]
+pub struct Lambda {
+    pub params: Vec<Pattern>,
+    pub body: Box<Expression>,
+}
+
+#[derive(Debug)]
+pub struct Access {
+    pub path: Vec<Spanned<Symbol>>,
+    pub namespace: Namespace,
+}
+
+#[derive(Debug)]
 pub enum Expression {
     Identifier(Spanned<Symbol>, Bound),
     Integer(Spanned<Symbol>),
     Float(Spanned<Symbol>),
     String(Spanned<Symbol>),
     Nothing(Span),
-    Binary {
-        lhs: Box<Expression>,
-        op: Operator,
-        rhs: Box<Expression>,
-    },
-    Application {
-        expr: Box<Expression>,
-        args: Vec<Expression>,
-    },
-    Let {
-        pattern: Pattern,
-        type_expr: Option<TypeExpr>,
-        expr: Box<Expression>,
-        body: Box<Expression>,
-    },
-    Lambda {
-        params: Vec<Pattern>,
-        body: Box<Expression>,
-    },
-    Access {
-        path: Vec<Spanned<Symbol>>,
-        namespace: Namespace,
-    },
+    Binary(Binary),
+    Application(Application),
+    Let(Let),
+    Lambda(Lambda),
+    Access(Access),
 }
 
 impl Expression {
@@ -66,11 +81,11 @@ impl Expression {
             | Self::Float(lexeme)
             | Self::String(lexeme) => lexeme.span,
             Self::Nothing(span) => *span,
-            Self::Binary { lhs, op: _, rhs } => lhs.span().extend(rhs.span()),
-            Self::Application { expr, args: _ } => expr.span(),
-            Self::Let { pattern: _, type_expr: _, expr: _, body } => body.span(),
-            Self::Lambda { params: _, body } => body.span(),
-            Self::Access { path, namespace: _ } => path.first().unwrap().span.extend(path.last().unwrap().span),
+            Self::Binary(Binary { lhs, op: _, rhs }) => lhs.span().extend(rhs.span()),
+            Self::Application(Application { expr, args: _ }) => expr.span(),
+            Self::Let(Let { pattern: _, type_expr: _, expr: _, body }) => body.span(),
+            Self::Lambda(Lambda { params: _, body }) => body.span(),
+            Self::Access(Access { path, namespace: _ }) => path.first().unwrap().span.extend(path.last().unwrap().span),
         }
     }
 }
@@ -123,7 +138,7 @@ pub enum Declaration {
         name: Spanned<Symbol>,
         params: Vec<TypedPattern>,
         body: Expression,
-        ret: Option<TypeExpr>,
+        ret: Option<TypeExpression>,
     },
     Import {
         parts: Vec<Spanned<Symbol>>,
@@ -131,7 +146,7 @@ pub enum Declaration {
     },
     Type {
         name: Spanned<Symbol>,
-        consts: Vec<(Spanned<Symbol>, Vec<TypeExpr>)>
+        consts: Vec<(Spanned<Symbol>, Vec<TypeExpression>)>
     }
 }
 
@@ -141,19 +156,20 @@ pub enum ImportKind {
 }
 
 #[derive(Debug)]
-pub enum TypeExpr {
+pub struct TypeFunction {
+    pub params: Vec<TypeExpression>,
+    pub ret: Box<TypeExpression>,
+}
+
+#[derive(Debug)]
+pub enum TypeExpression {
     Identifier(Spanned<Symbol>, Bound),
-    Function {
-        params: Vec<TypeExpr>,
-        ret: Box<TypeExpr>,
-    },
-    Access {
-        path: Vec<Spanned<Symbol>>,
-    },
+    Function(TypeFunction),
+    Access(Vec<Spanned<Symbol>>)
 }
 
 pub struct TypedPattern {
     pub pattern: Pattern,
-    pub typ: TypeExpr,
+    pub typ: TypeExpression,
 }
 
