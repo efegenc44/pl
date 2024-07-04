@@ -42,28 +42,50 @@ impl NameResolver {
 
         let functions = module.functions.keys().cloned().collect();
 
-        let imports = module.imports.iter().map(|(module_name, import)| {
-            (module_name.clone(), Self::collect_import_names(&import))
-        }).collect();
 
-        Names { functions, imports, types }
+        let mut type_directs = HashMap::new();
+        let mut func_directs = HashMap::new();
+        let mut imports = HashMap::new();
+        for (name, import) in &module.imports {
+            let (names, import_type_directs, import_func_directs) = Self::collect_import_names(import);
+            type_directs.extend(import_type_directs);
+            func_directs.extend(import_func_directs);
+            imports.insert(name.clone(), names);
+        }
+
+        Names { functions, imports, types, type_directs, func_directs }
     }
 
-    fn collect_import_names(import: &Import) -> ImportNames {
+    fn collect_import_names(import: &Import) -> (ImportNames, HashMap<Symbol, Vec<Spanned<Symbol>>>, HashMap<Symbol, Vec<Spanned<Symbol>>>) {
         match &import.kind {
             module::ImportKind::File(module) => {
-                let types = module.types.iter().map(|(type_name, typ)| {
+                let types: HashMap<_, _> = module.types.iter().map(|(type_name, typ)| {
                     (type_name.clone(), typ.consts.iter().map(|(name, _)| name.data.clone()).collect())
                 }).collect();
 
-                let functions = module.functions.keys().cloned().collect();
+                let functions: HashSet<_> = module.functions.keys().cloned().collect();
 
-                ImportNames::Module { functions, types }
+                let mut type_directs = HashMap::new();
+                let mut func_directs = HashMap::new();
+                for direct in &import.directs {
+                    let path = vec![import.parts.last().unwrap().clone(), direct.clone()];
+
+                    // NOTE: While importing Type has priority.
+                    if types.contains_key(&direct.data) {
+                        type_directs.insert(direct.data.clone(), path);
+                    } else if functions.contains(&direct.data) {
+                        func_directs.insert(direct.data.clone(), path);
+                    } else {
+                        todo!("Unbound name in module")
+                    };
+                }
+
+                (ImportNames::Module { functions, types }, type_directs, func_directs)
             },
             module::ImportKind::Folder(imports) => {
-                let modules = imports.iter().map(|(name, import)| (name.clone(), Self::collect_import_names(import))).collect();
-
-                ImportNames::Group(modules)
+                let modules = imports.iter().map(|(name, import)| (name.clone(), Self::collect_import_names(import).0)).collect();
+                // TODO: Direct importing namespaces
+                (ImportNames::Group(modules), HashMap::new(), HashMap::new())
             },
         }
 
@@ -86,6 +108,8 @@ impl NameResolver {
             Bound::Local(indice)
         } else if self.names.functions.contains(&identifier.data) {
             Bound::Global(identifier.data.clone())
+        } else if let Some(path) = self.names.func_directs.get(&identifier.data) {
+            Bound::Absolute(path.clone())
         } else {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
@@ -208,6 +232,8 @@ impl NameResolver {
         // TODO: Local type variables for polymorphic types.
         let bound = if self.names.types.contains_key(&identifier.data) {
             Bound::Global(identifier.data.clone())
+        } else if let Some(path) = self.names.type_directs.get(&identifier.data) {
+            Bound::Absolute(path.clone())
         } else {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
@@ -314,7 +340,7 @@ impl NameResolver {
 
     fn resolve_imports(imports: HashMap<Symbol, Import>) -> ResolutionResult<HashMap<Symbol, Import>> {
         let mut resolved_imports = HashMap::new();
-        for (name, Import { parts, kind }) in imports {
+        for (name, Import { parts, kind, directs }) in imports {
             match kind {
                 module::ImportKind::File(module) => {
                     let module = NameResolver::resolve_module(module).map_err(|error| {
@@ -335,11 +361,11 @@ impl NameResolver {
                         .attach(span)
                     })?;
 
-                    let resolved_import = Import { parts, kind: module::ImportKind::File(module) };
+                    let resolved_import = Import { parts, kind: module::ImportKind::File(module), directs };
                     resolved_imports.insert(name, resolved_import);
                 },
                 module::ImportKind::Folder(imports) => {
-                    resolved_imports.insert(name, Import { parts, kind: module::ImportKind::Folder(Self::resolve_imports(imports)?)});
+                    resolved_imports.insert(name, Import { parts, kind: module::ImportKind::Folder(Self::resolve_imports(imports)?), directs });
                 },
             }
         }
@@ -363,6 +389,8 @@ struct Names {
     functions: HashSet<Symbol>,
     imports: HashMap<Symbol, ImportNames>,
     types: HashMap<Symbol, HashSet<Symbol>>,
+    type_directs: HashMap<Symbol, Vec<Spanned<Symbol>>>,
+    func_directs: HashMap<Symbol, Vec<Spanned<Symbol>>>,
 }
 
 enum ImportNames {

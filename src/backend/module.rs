@@ -26,9 +26,9 @@ impl Module {
                         return Err(ModuleError::DuplicateDeclaration(name.data.clone()).attach(name.span))
                     }
                 }
-                Declaration::Import { parts, kind } => {
+                Declaration::Import { parts, kind, directs } => {
                     let module_name = parts.last().unwrap().data.clone();
-                    imports.insert(module_name, Import { kind: Self::import_kind(kind, &parts)?, parts });
+                    imports.insert(module_name, Import { kind: Self::import_kind(kind, &parts)?, parts, directs });
                 },
                 Declaration::Type { name, consts } => {
                     if !types.contains_key(&name.data) {
@@ -71,7 +71,7 @@ impl Module {
                 let mut map = HashMap::new();
                 for (name, kind) in imports {
                     let kind = Self::import_kind(kind, parts)?;
-                    map.insert(name, Import { parts: parts.to_vec(), kind });
+                    map.insert(name, Import { parts: parts.to_vec(), kind, directs: vec![] });
                 }
 
                 Ok(ImportKind::Folder(map))
@@ -111,6 +111,7 @@ pub struct Function {
 pub struct Import {
     pub parts: Vec<Spanned<Symbol>>,
     pub kind: ImportKind,
+    pub directs: Vec<Spanned<Symbol>>,
 }
 
 pub struct Type {

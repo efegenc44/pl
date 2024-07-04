@@ -53,7 +53,7 @@ pub struct Lambda {
     pub body: Box<Expression>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Access {
     pub path: Vec<Spanned<Symbol>>,
     pub namespace: Namespace,
@@ -90,7 +90,7 @@ impl Expression {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Namespace {
     Type,
     Module,
@@ -101,6 +101,7 @@ pub enum Namespace {
 pub enum Bound {
     Local(usize),
     Global(Symbol),
+    Absolute(Vec<Spanned<Symbol>>),
     None,
 }
 
@@ -109,6 +110,7 @@ impl Display for Bound {
         match self {
             Self::Local(id) => write!(f, "Local {id}"),
             Self::Global(name) => write!(f, "Global {name}"),
+            Self::Absolute(_) => todo!(),
             Self::None => write!(f, "None"),
         }
     }
@@ -143,6 +145,7 @@ pub enum Declaration {
     Import {
         parts: Vec<Spanned<Symbol>>,
         kind: ImportKind,
+        directs: Vec<Spanned<Symbol>>,
     },
     Type {
         name: Spanned<Symbol>,

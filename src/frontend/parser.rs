@@ -319,7 +319,14 @@ impl<'source> Parser<'source> {
         });
 
         let kind = Self::parse_import(import_path, &parts)?;
-        Ok(Declaration::Import { parts, kind })
+
+        let directs = if self.next_peek_is(&Token::OpeningParenthesis) {
+            self.comma_seperated_until(Self::expect_identifier, Token::ClosingParenthesis)?
+        } else {
+            vec![]
+        };
+
+        Ok(Declaration::Import { parts, kind, directs })
     }
 
     fn parse_import(mut import_path: PathBuf, parts: &[Spanned<Symbol>]) -> ParseResult<ImportKind> {

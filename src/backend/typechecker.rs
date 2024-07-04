@@ -67,6 +67,8 @@ impl TypeChecker {
                 let (params, ret) = self.interface.functions[identifier].clone();
                 Ok(Type::Function { params, ret: Box::new(ret) })
             },
+            // TODO: Remove to_vec
+            Bound::Absolute(path) => self.type_check_access(&Access { path: path.to_vec(), namespace: Namespace::Module }),
             Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
         }
     }
@@ -104,7 +106,7 @@ impl TypeChecker {
         Ok(result)
     }
 
-    fn type_check_access(&mut self, Access { path, namespace }: &Access) -> TypeCheckResult<Type> {
+    fn type_check_access(&self, Access { path, namespace }: &Access) -> TypeCheckResult<Type> {
         match &path[..] {
             [_] | [] => unreachable!(),
             [from, name] => {
@@ -194,6 +196,7 @@ impl TypeChecker {
                 match bound {
                     Bound::Local(_indice) => todo!("Local Type Variables"),
                     Bound::Global(identifier) => self.interface.types[identifier].clone(),
+                    Bound::Absolute(path) => self.type_check_type_access(&path),
                     Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
                 }
             },
@@ -203,39 +206,41 @@ impl TypeChecker {
 
                 Type::Function { params, ret }
             },
-            TypeExpression::Access(path) => {
-                match &path[..] {
-                    [_] | [] => unreachable!(),
-                    [from, name] => {
-                        let ImportTypes::Module { types, .. } = &self.interface.imports[&from.data] else {
-                            unreachable!()
-                        };
+            TypeExpression::Access(path) => self.type_check_type_access(path),
+        }
+    }
 
-                        types[&name.data].clone()
-                    }
-                    [modules@.., before, last] => {
-                        let from = &modules.first().unwrap();
-                        let mut current_import = &self.interface.imports[&from.data];
+    fn type_check_type_access(&self, path: &[Spanned<Symbol>]) -> Type {
+        match &path[..] {
+            [_] | [] => unreachable!(),
+            [from, name] => {
+                let ImportTypes::Module { types, .. } = &self.interface.imports[&from.data] else {
+                    unreachable!()
+                };
 
-                        for module in &modules[1..] {
-                            let ImportTypes::Group(modules) = current_import else {
-                                unreachable!()
-                            };
+                types[&name.data].clone()
+            }
+            [modules@.., before, last] => {
+                let from = &modules.first().unwrap();
+                let mut current_import = &self.interface.imports[&from.data];
 
-                            current_import = &modules[&module.data];
-                        }
+                for module in &modules[1..] {
+                    let ImportTypes::Group(modules) = current_import else {
+                        unreachable!()
+                    };
 
-                        let ImportTypes::Group(modules) = current_import else {
-                            unreachable!()
-                        };
-
-                        let ImportTypes::Module { types, .. } = &modules[&before.data] else {
-                            unreachable!()
-                        };
-
-                        types[&last.data].clone()
-                    }
+                    current_import = &modules[&module.data];
                 }
+
+                let ImportTypes::Group(modules) = current_import else {
+                    unreachable!()
+                };
+
+                let ImportTypes::Module { types, .. } = &modules[&before.data] else {
+                    unreachable!()
+                };
+
+                types[&last.data].clone()
             }
         }
     }
@@ -251,7 +256,7 @@ impl TypeChecker {
         self.expect_type(body, &ret)
     }
 
-    fn type_check_import(Import { parts, kind }: &Import) -> TypeCheckResult<()> {
+    fn type_check_import(Import { parts, kind, directs: _ }: &Import) -> TypeCheckResult<()> {
         match kind {
             module::ImportKind::File(module) => {
                 Self::type_check_module(module).map_err(|error| {
@@ -316,7 +321,7 @@ impl TypeChecker {
         }
     }
 
-    fn get_import_types(Import { parts: _, kind }: &Import) -> ImportTypes {
+    fn get_import_types(Import { parts: _, kind, directs: _ }: &Import) -> ImportTypes {
             match kind {
                 module::ImportKind::File(module) => {
                     let resolver = Self::new(&module);
