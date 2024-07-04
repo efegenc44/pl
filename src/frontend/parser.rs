@@ -157,12 +157,35 @@ impl<'source> Parser<'source> {
         };
 
         match &peeked.data {
-            Token::Identifier(_) => self.literal(Pattern::Any),
+            Token::Identifier(_) => self.pattern_identifier(),
             Token::Integer(_) => self.literal(Pattern::Integer),
             Token::Float(_) => self.literal(Pattern::Float),
             Token::String(_) => self.literal(Pattern::String),
             Token::OpeningParenthesis => self.grouping(Self::pattern),
             unexpected => Err(ParseError::UnexpectedToken(unexpected.clone()).attach(peeked.span)),
+        }
+    }
+
+    fn pattern_identifier(&mut self) -> ParseResult<Pattern> {
+        let identifier = self.expect_identifier()?;
+        if self.next_peek_is(&Token::DoubleColon) {
+            let mut path = vec![identifier, self.expect_identifier()?];
+            while self.next_peek_is(&Token::DoubleColon) {
+                path.push(self.expect_identifier()?);
+            }
+
+            let params = if self.next_peek_is(&Token::OpeningParenthesis) {
+                self.comma_seperated_until(Self::pattern, Token::ClosingParenthesis)?
+            } else {
+                vec![]
+            };
+
+            Ok(Pattern::Constructor { path, params })
+        } else if self.next_peek_is(&Token::OpeningParenthesis) {
+            let params = self.comma_seperated_until(Self::pattern, Token::ClosingParenthesis)?;
+            Ok(Pattern::Constructor { path: vec![identifier], params })
+        } else {
+            Ok(Pattern::Any(Spanned::new(identifier.data, identifier.span)))
         }
     }
 

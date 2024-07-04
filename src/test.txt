@@ -17,3 +17,8 @@ func main() -> Nat =
     let test2::Nat::Zero(): Nat in
         merhaba -> merhaba,
         a       -> a
+
+func test() -> Nat =
+    let test2::Nat::Zero() in
+        test2::Nat::Succ(test2::Nat::Succ(m)) -> m,
+        zero                                  -> zero

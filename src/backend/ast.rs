@@ -121,6 +121,10 @@ pub enum Pattern {
     String(Spanned<Symbol>),
     Integer(Spanned<Symbol>),
     Float(Spanned<Symbol>),
+    Constructor {
+        path: Vec<Spanned<Symbol>>,
+        params: Vec<Pattern>,
+    }
 }
 
 impl Pattern {
@@ -130,6 +134,7 @@ impl Pattern {
             | Self::String(lexeme)
             | Self::Integer(lexeme)
             | Self::Float(lexeme) => lexeme.span,
+            Self::Constructor { .. } => todo!(),
         }
     }
 }

@@ -384,7 +384,23 @@ impl NameResolver {
                 self.locals.push(identifier.data.clone());
                 1
             }
-            _literal => 0,
+            Pattern::Constructor { path, params } => {
+                match &path[..] {
+                    [_] => todo!("cant import constructors directly right now."),
+                    path => {
+                        // TODO: Remove unwrap.
+                        self.resolve_access(Access { path: path.to_vec(), namespace: Namespace::Type }).unwrap();
+                    },
+                }
+
+                let mut local_count = 0;
+                for param in params {
+                    local_count += self.push_names_in_pattern(param);
+                }
+
+                local_count
+            },
+            Pattern::String(_) | Pattern::Float(_) | Pattern::Integer(_) => 0,
         }
     }
 }

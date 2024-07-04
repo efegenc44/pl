@@ -188,6 +188,41 @@ impl TypeChecker {
             (Pattern::String(_), Type::String)
             | (Pattern::Integer(_), Type::Integer)
             | (Pattern::Float(_), Type::Float) => Ok(0),
+            (Pattern::Constructor { path, params }, Type::Custom(type_name)) => {
+                let Type::Function { params: cparams, ret: _ } = (match &path[..] {
+                    [_] => todo!(),
+                    [path@.., name] => {
+                        let Type::Custom(typ_name) = self.type_check_type_access(path) else {
+                            unreachable!();
+                        };
+
+                        if &typ_name != type_name {
+                            return Err(TypeCheckError::PatternMismatch(typ.clone()).attach(pattern.span()))
+                        }
+
+                        let mut path = path.to_vec();
+                        path.push(name.clone());
+                        self.type_check_access(&(Access {
+                            path,
+                            namespace: Namespace::Type,
+                        }))?
+                    },
+                    _ => unreachable!(),
+                }) else {
+                    unreachable!()
+                };
+
+                if cparams.len() != params.len() {
+                    return Err(TypeCheckError::ArityMismatch { expected: params.len(), found: cparams.len() }.attach(pattern.span()))
+                }
+
+                let mut local_count = 0;
+                for (cparam, param) in iter::zip(cparams, params) {
+                    local_count += self.push_types_in_pattern(param, &cparam)?;
+                }
+
+                Ok(local_count)
+            },
             _ => Err(TypeCheckError::PatternMismatch(typ.clone()).attach(pattern.span()))
         }
     }
@@ -260,11 +295,16 @@ impl TypeChecker {
         let Function { name, params: patterns, body, ret: _ } = function;
         let (params, ret) = self.interface.functions[&name.data].clone();
 
+        let mut local_count = 0;
         for (pattern, typ) in iter::zip(patterns, params) {
-            self.push_types_in_pattern(&pattern.pattern, &typ)?;
+            // TODO: Do not allow variant patterns in function signatures
+            local_count += self.push_types_in_pattern(&pattern.pattern, &typ)?;
         }
 
-        self.expect_type(body, &ret)
+        let result = self.expect_type(body, &ret);
+        self.locals.truncate(self.locals.len() - local_count);
+
+        result
     }
 
     fn type_check_import(Import { parts, kind, directs: _ }: &Import) -> TypeCheckResult<()> {
@@ -370,7 +410,7 @@ pub enum TypeCheckError {
     ArityMismatch {
         expected: usize,
         found: usize,
-    }
+    },
 }
 
 impl Display for TypeCheckError {
