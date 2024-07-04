@@ -41,10 +41,9 @@ pub struct Application {
 
 #[derive(Debug)]
 pub struct Let {
-    pub pattern: Pattern,
-    pub type_expr: Option<TypeExpression>,
     pub expr: Box<Expression>,
-    pub body: Box<Expression>,
+    pub type_expr: Option<TypeExpression>,
+    pub branches: Vec<(Pattern, Box<Expression>)>
 }
 
 #[derive(Debug)]
@@ -83,7 +82,7 @@ impl Expression {
             Self::Nothing(span) => *span,
             Self::Binary(Binary { lhs, op: _, rhs }) => lhs.span().extend(rhs.span()),
             Self::Application(Application { expr, args: _ }) => expr.span(),
-            Self::Let(Let { pattern: _, type_expr: _, expr: _, body }) => body.span(),
+            Self::Let(Let { type_expr: _, expr: _, branches }) => branches.last().unwrap().1.span(),
             Self::Lambda(Lambda { params: _, body }) => body.span(),
             Self::Access(Access { path, namespace: _ }) => path.first().unwrap().span.extend(path.last().unwrap().span),
         }

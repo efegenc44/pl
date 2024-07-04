@@ -120,19 +120,27 @@ impl<'source> Parser<'source> {
 
     fn lett(&mut self) -> ParseResult<Expression> {
         self.expect(Token::KeywordLet)?;
-        let pattern = self.pattern()?;
-        let type_expr = self.optional(Self::type_expr, Token::Colon)?;
-        self.expect(Token::Equals)?;
         let expr = Box::new(self.expression()?);
+        let type_expr = self.optional(Self::type_expr, Token::Colon)?;
         self.expect(Token::KeywordIn)?;
-        let body = Box::new(self.expression()?);
+        let mut branches = vec![self.let_branch()?];
+        while self.next_peek_is(&Token::Comma) {
+            branches.push(self.let_branch()?);
+        }
 
         Ok(Expression::Let(Let {
-            pattern,
             type_expr,
             expr,
-            body,
+            branches,
         }))
+    }
+
+    fn let_branch(&mut self) -> ParseResult<(Pattern, Box<Expression>)> {
+        let pattern = self.pattern()?;
+        self.expect(Token::RightArrow)?;
+        let expr = Box::new(self.expression()?);
+
+        Ok((pattern, expr))
     }
 
     fn lambda(&mut self) -> ParseResult<Expression> {

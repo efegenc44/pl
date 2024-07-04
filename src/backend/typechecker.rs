@@ -90,7 +90,9 @@ impl TypeChecker {
         Ok(*ret)
     }
 
-    fn type_check_let(&mut self, Let { pattern, type_expr, expr, body }: &Let) -> TypeCheckResult<Type> {
+    fn type_check_let(&mut self, Let { expr, type_expr, branches }: &Let) -> TypeCheckResult<Type> {
+        // Exhaustiveness check.
+
         let typ = if let Some(typ) = type_expr {
             let typ = self.eval_type_expr(typ);
             self.expect_type(expr, &typ)?;
@@ -99,9 +101,18 @@ impl TypeChecker {
             self.type_check_expr(expr)?
         };
 
-        let local_count = self.push_types_in_pattern(pattern, typ)?;
-        let result = self.type_check_expr(body)?;
+        let first_branch = branches.first().unwrap();
+
+        let local_count = self.push_types_in_pattern(&first_branch.0, &typ)?;
+        let result = self.type_check_expr(&first_branch.1)?;
         self.locals.truncate(self.locals.len() - local_count);
+
+        for (pattern, body) in &branches[1..] {
+            let local_count = self.push_types_in_pattern(pattern, &typ)?;
+            self.expect_type(body, &result)?;
+            self.locals.truncate(self.locals.len() - local_count);
+            assert!(self.locals.is_empty())
+        }
 
         Ok(result)
     }
@@ -168,16 +179,16 @@ impl TypeChecker {
         }
     }
 
-    fn push_types_in_pattern(&mut self, pattern: &Pattern, typ: Type) -> TypeCheckResult<usize> {
+    fn push_types_in_pattern(&mut self, pattern: &Pattern, typ: &Type) -> TypeCheckResult<usize> {
         match (pattern, &typ) {
             (Pattern::Any(_), _) => {
-                self.locals.push(typ);
+                self.locals.push(typ.clone());
                 Ok(1)
             },
             (Pattern::String(_), Type::String)
             | (Pattern::Integer(_), Type::Integer)
             | (Pattern::Float(_), Type::Float) => Ok(0),
-            _ => Err(TypeCheckError::PatternMismatch(typ).attach(pattern.span()))
+            _ => Err(TypeCheckError::PatternMismatch(typ.clone()).attach(pattern.span()))
         }
     }
 
@@ -250,7 +261,7 @@ impl TypeChecker {
         let (params, ret) = self.interface.functions[&name.data].clone();
 
         for (pattern, typ) in iter::zip(patterns, params) {
-            self.push_types_in_pattern(&pattern.pattern, typ)?;
+            self.push_types_in_pattern(&pattern.pattern, &typ)?;
         }
 
         self.expect_type(body, &ret)

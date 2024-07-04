@@ -134,14 +134,19 @@ impl NameResolver {
         Ok(Expression::Application(Application { expr, args }))
     }
 
-    fn resolve_let(&mut self, Let { pattern, type_expr, expr, body }: Let) ->  ResolutionResult<Expression> {
+    fn resolve_let(&mut self, Let { expr, type_expr, branches }: Let) ->  ResolutionResult<Expression> {
         let expr = Box::new(self.resolve_expr(*expr)?);
         let type_expr = type_expr.map(|type_expr| self.resolve_type_expr(type_expr)).transpose()?;
-        let local_count = self.push_names_in_pattern(&pattern);
-        let body = Box::new(self.resolve_expr(*body)?);
-        self.locals.truncate(self.locals.len() - local_count);
+        let mut resolved_branches = vec![];
+        for (pattern, body) in branches {
+            let local_count = self.push_names_in_pattern(&pattern);
+            let body = Box::new(self.resolve_expr(*body)?);
+            self.locals.truncate(self.locals.len() - local_count);
+            resolved_branches.push((pattern, body));
+        }
 
-        Ok(Expression::Let(Let { pattern, type_expr, expr, body }))
+
+        Ok(Expression::Let(Let { expr, type_expr, branches: resolved_branches }))
     }
 
     fn resolve_lambda(&mut self, Lambda { params, body }: Lambda) -> ResolutionResult<Expression> {

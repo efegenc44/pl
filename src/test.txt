@@ -12,3 +12,8 @@ func super(
 
 type A = foo(B)
 type B = foo(A)
+
+func main() -> Nat =
+    let test2::Nat::Zero(): Nat in
+        merhaba -> merhaba,
+        a       -> a
