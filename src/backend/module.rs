@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::ast::{self, Declaration, Expression, TypeExpression, TypedPattern};
+use super::ast::{self, Declaration, Expression, Pattern, TypeExpression};
 
 #[derive(Default)]
 pub struct Module {
@@ -19,9 +19,9 @@ impl Module {
 
         for declaration in declarations {
             match declaration {
-                Declaration::Function { name, params, body, ret } => {
+                Declaration::Function { name, params, ret, branches  } => {
                     if !functions.contains_key(&name.data) {
-                        functions.insert(name.data.clone(), Function { name, params, body, ret });
+                        functions.insert(name.data.clone(), Function { name, params, ret, branches  });
                     } else {
                         return Err(ModuleError::DuplicateDeclaration(name.data.clone()).attach(name.span))
                     }
@@ -103,9 +103,9 @@ pub type ModuleResult<T> = Result<T, Spanned<ModuleError>>;
 
 pub struct Function {
     pub name: Spanned<Symbol>,
-    pub params: Vec<TypedPattern>,
-    pub body: Expression,
+    pub params: Vec<TypeExpression>,
     pub ret: Option<TypeExpression>,
+    pub branches: Vec<(Vec<Pattern>, Expression)>,
 }
 
 pub struct Import {

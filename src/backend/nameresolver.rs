@@ -8,7 +8,7 @@ use crate::{backend::ast::Binary, frontend::{
 }};
 
 use super::{
-    ast::{Access, Application, Bound, Expression, TypeFunction, Lambda, Let, Namespace, Pattern, TypeExpression, TypedPattern},
+    ast::{Access, Application, Bound, Expression, TypeFunction, Lambda, Let, Namespace, Pattern, TypeExpression},
     module::{self, Function, Import, Module}
 };
 
@@ -302,22 +302,24 @@ impl NameResolver {
         Ok(TypeExpression::Access(path))
     }
 
-    fn resolve_function(&mut self, Function { name, params, body, ret }: Function) -> ResolutionResult<Function> {
-        let mut resolved_params = vec![];
-        let mut local_count = 0;
-        for TypedPattern { pattern, typ } in params {
-            local_count += self.push_names_in_pattern(&pattern);
-            resolved_params.push(TypedPattern {
-                typ: self.resolve_type_expr(typ)?,
-                pattern,
-            })
+    fn resolve_function(&mut self, Function { name, params, ret, branches }: Function) -> ResolutionResult<Function> {
+        let params = params.into_iter().map(|param| self.resolve_type_expr(param)).collect::<Result<Vec<_>, _>>()?;
+
+        let mut resolved_branches = vec![];
+        for (patterns, body) in branches {
+            let mut local_count = 0;
+            for pattern in &patterns {
+                local_count += self.push_names_in_pattern(pattern);
+            }
+            let body = self.resolve_expr(body)?;
+            self.locals.truncate(self.locals.len() - local_count);
+            resolved_branches.push((patterns, body));
+            assert!(self.locals.is_empty());
         }
-        let body = self.resolve_expr(body)?;
-        self.locals.truncate(self.locals.len() - local_count);
-        assert!(self.locals.is_empty());
+
         let ret = ret.map(|type_expr| self.resolve_type_expr(type_expr)).transpose()?;
 
-        Ok(Function { name, params: resolved_params, body, ret })
+        Ok(Function { name, params, ret, branches: resolved_branches })
     }
 
     fn resolve_functions(&mut self, functions: HashMap<Symbol, Function>) -> ResolutionResult<HashMap<Symbol, Function>> {

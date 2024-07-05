@@ -1,24 +1,32 @@
 import src::test2 (Nat, abo)
 import src::testmodule
 
-func nat(x: Nat) -> Nat = test2::Nat::Succ(x)
+func nat(Nat) -> Nat
+    = x -> test2::Nat::Succ(x)
 
-func foo(x: A) -> B = B::foo(x)
+func foo(A) -> B
+    = x -> B::foo(x)
 
-func bar(x: testmodule::testfile::TestFileType) -> testmodule::testfile::TestFileType = testmodule::testfile::TestFileType::TestFileType()
-func super(
-    x: testmodule::innermodule::innerfile::InnerType
-) -> testmodule::innermodule::innerfile::InnerType = abo(x)
+func bar(testmodule::testfile::TestFileType) -> testmodule::testfile::TestFileType
+    = x -> testmodule::testfile::TestFileType::TestFileType()
+
+func super(testmodule::innermodule::innerfile::InnerType) -> testmodule::innermodule::innerfile::InnerType
+    = x -> abo(x)
 
 type A = foo(B)
 type B = foo(A)
 
-func main() -> Nat =
-    let test2::Nat::Zero(): Nat in
-        merhaba -> merhaba,
-        a       -> a
+func main() -> Nat = x ->
+    let test2::Nat::Zero(): Nat
+        = merhaba -> merhaba
+        | a       -> a
 
-func test() -> Nat =
-    let test2::Nat::Zero() in
-        test2::Nat::Succ(test2::Nat::Succ(m)) -> m,
-        zero                                  -> zero
+func test() -> Nat = x ->
+    let test2::Nat::Zero()
+        = test2::Nat::Succ(test2::Nat::Succ(m)) -> m
+        | zero                                  -> zero
+
+func add(Nat, Nat) -> Nat
+    = n, test2::Nat::Zero() -> n
+    | n, A::foo(m)          -> test2::Nat::Succ(add(n, m))
+

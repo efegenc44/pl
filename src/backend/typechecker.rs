@@ -258,7 +258,10 @@ impl TypeChecker {
 
     fn type_check_type_access(&self, path: &[Spanned<Symbol>]) -> Type {
         match &path[..] {
-            [_] | [] => unreachable!(),
+            [] => unreachable!(),
+            [from] => {
+                self.interface.types[&from.data].clone()
+            }
             [from, name] => {
                 let ImportTypes::Module { types, .. } = &self.interface.imports[&from.data] else {
                     unreachable!()
@@ -291,20 +294,20 @@ impl TypeChecker {
         }
     }
 
-    fn type_check_function(&mut self, function: &Function) -> TypeCheckResult<()> {
-        let Function { name, params: patterns, body, ret: _ } = function;
+    fn type_check_function(&mut self, Function { name, params:_ , ret: _, branches }: &Function) -> TypeCheckResult<()> {
         let (params, ret) = self.interface.functions[&name.data].clone();
 
-        let mut local_count = 0;
-        for (pattern, typ) in iter::zip(patterns, params) {
-            // TODO: Do not allow variant patterns in function signatures
-            local_count += self.push_types_in_pattern(&pattern.pattern, &typ)?;
+        for (patterns, body) in branches {
+            let mut local_count = 0;
+            for (pattern, typ) in iter::zip(patterns, &params) {
+                local_count += self.push_types_in_pattern(pattern, &typ)?;
+            }
+            self.expect_type(body, &ret)?;
+            self.locals.truncate(self.locals.len() - local_count);
+            assert!(self.locals.is_empty())
         }
 
-        let result = self.expect_type(body, &ret);
-        self.locals.truncate(self.locals.len() - local_count);
-
-        result
+        Ok(())
     }
 
     fn type_check_import(Import { parts, kind, directs: _ }: &Import) -> TypeCheckResult<()> {
@@ -359,11 +362,11 @@ impl TypeChecker {
     }
 
     fn function_interface(&mut self, functions: &HashMap<Symbol, Function>) {
-        for Function { name, params, body: _, ret } in functions.values() {
+        for Function { name, params, ret, branches: _ } in functions.values() {
             let function_type = (
                 params
                     .iter()
-                    .map(|param| self.eval_type_expr(&param.typ))
+                    .map(|param| self.eval_type_expr(param))
                     .collect(),
                 ret.as_ref().map_or(Type::Nothing, |ret| self.eval_type_expr(ret))
             );

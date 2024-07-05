@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::{read_dir, read_to_string}, iter::Peekable, path::Pa
 
 use crate::{
     backend::ast::{
-        Access, Application, Binary, Bound, Declaration, Expression, TypeFunction, ImportKind, Lambda, Let, Namespace, Operator, Pattern, TypeExpression, TypedPattern
+        Access, Application, Binary, Bound, Declaration, Expression, TypeFunction, ImportKind, Lambda, Let, Namespace, Operator, Pattern, TypeExpression
     },
     frontend::token::Token,
 };
@@ -122,9 +122,9 @@ impl<'source> Parser<'source> {
         self.expect(Token::KeywordLet)?;
         let expr = Box::new(self.expression()?);
         let type_expr = self.optional(Self::type_expr, Token::Colon)?;
-        self.expect(Token::KeywordIn)?;
+        self.expect(Token::Equals)?;
         let mut branches = vec![self.let_branch()?];
-        while self.next_peek_is(&Token::Comma) {
+        while self.next_peek_is(&Token::Bar) {
             branches.push(self.let_branch()?);
         }
 
@@ -316,24 +316,26 @@ impl<'source> Parser<'source> {
         }
     }
 
-    fn typed_pattern(&mut self) -> ParseResult<TypedPattern> {
-        let pattern = self.pattern()?;
-        self.expect(Token::Colon)?;
-        let typ = self.type_expr()?;
-
-        Ok(TypedPattern { pattern, typ })
-    }
-
     fn func(&mut self) -> ParseResult<Declaration> {
         self.expect(Token::KeywordFunc)?;
         let name = self.expect_identifier()?;
         self.expect(Token::OpeningParenthesis)?;
-        let params = self.comma_seperated_until(Self::typed_pattern, Token::ClosingParenthesis)?;
+        let params = self.comma_seperated_until(Self::type_expr, Token::ClosingParenthesis)?;
         let ret = self.optional(Self::type_expr, Token::RightArrow)?;
         self.expect(Token::Equals)?;
-        let body = self.expression()?;
+        let mut branches = vec![self.func_branch()?];
+        while self.next_peek_is(&Token::Bar) {
+            branches.push(self.func_branch()?);
+        }
 
-        Ok(Declaration::Function { name, params, body, ret })
+        Ok(Declaration::Function { name, params, ret, branches })
+    }
+
+    fn func_branch(&mut self) -> ParseResult<(Vec<Pattern>, Expression)> {
+        let patterns = self.comma_seperated_until(Self::pattern, Token::RightArrow)?;
+        let expr = self.expression()?;
+
+        Ok((patterns, expr))
     }
 
     fn import(&mut self) -> ParseResult<Declaration> {

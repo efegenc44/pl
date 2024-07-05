@@ -134,7 +134,9 @@ impl Pattern {
             | Self::String(lexeme)
             | Self::Integer(lexeme)
             | Self::Float(lexeme) => lexeme.span,
-            Self::Constructor { .. } => todo!(),
+            Self::Constructor { path, params: _ } => {
+                path.first().unwrap().span.extend(path.last().unwrap().span)
+            },
         }
     }
 }
@@ -142,9 +144,9 @@ impl Pattern {
 pub enum Declaration {
     Function {
         name: Spanned<Symbol>,
-        params: Vec<TypedPattern>,
-        body: Expression,
+        params: Vec<TypeExpression>,
         ret: Option<TypeExpression>,
+        branches: Vec<(Vec<Pattern>, Expression)>
     },
     Import {
         parts: Vec<Spanned<Symbol>>,
@@ -174,9 +176,3 @@ pub enum TypeExpression {
     Function(TypeFunction),
     Access(Vec<Spanned<Symbol>>)
 }
-
-pub struct TypedPattern {
-    pub pattern: Pattern,
-    pub typ: TypeExpression,
-}
-
