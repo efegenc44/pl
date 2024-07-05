@@ -5,7 +5,7 @@ use crate::frontend::{
     token::Symbol,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Operator {
     Add,
     Sub,
@@ -26,27 +26,27 @@ impl Display for Operator {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Binary {
     pub lhs: Box<Expression>,
     pub op: Operator,
     pub rhs: Box<Expression>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Application {
     pub expr: Box<Expression>,
     pub args: Vec<Expression>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Let {
     pub expr: Box<Expression>,
     pub type_expr: Option<TypeExpression>,
     pub branches: Vec<(Pattern, Box<Expression>)>
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Lambda {
     pub params: Vec<Pattern>,
     pub body: Box<Expression>,
@@ -58,7 +58,7 @@ pub struct Access {
     pub namespace: Namespace,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Expression {
     Identifier(Spanned<Symbol>, Bound),
     Integer(Spanned<Symbol>),
@@ -96,7 +96,7 @@ pub enum Namespace {
     Undetermined
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Bound {
     Local(usize),
     Global(Symbol),
@@ -115,7 +115,7 @@ impl Display for Bound {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Pattern {
     Any(Spanned<Symbol>),
     String(Spanned<Symbol>),
@@ -164,13 +164,13 @@ pub enum ImportKind {
     Folder(Vec<(Symbol, ImportKind)>)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TypeFunction {
     pub params: Vec<TypeExpression>,
     pub ret: Box<TypeExpression>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TypeExpression {
     Identifier(Spanned<Symbol>, Bound),
     Function(TypeFunction),

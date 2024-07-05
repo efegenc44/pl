@@ -1,0 +1,18 @@
+func main() -> Nat
+    = x -> mul(
+        Nat::Succ(Nat::Succ(Nat::Zero())),
+        Nat::Succ(Nat::Succ(Nat::Succ(Nat::Succ(Nat::Zero()))))
+    )
+
+type Nat
+    = Zero
+    | Succ(Nat)
+
+func add(Nat, Nat) -> Nat
+    = n, Nat::Zero()  -> n
+    | n, Nat::Succ(m) -> Nat::Succ(add(n, m))
+
+func mul(Nat, Nat) -> Nat
+    = n, Nat::Zero()  -> Nat::Zero()
+    | n, Nat::Succ(m) -> add(n, mul(n, m))
+

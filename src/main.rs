@@ -7,7 +7,7 @@ use std::{
     io::{self, stderr, stdin, stdout, Write},
 };
 
-use backend::{module::Module, nameresolver::NameResolver, typechecker::TypeChecker};
+use backend::{evaluator::Evaluator, module::Module, nameresolver::NameResolver, typechecker::TypeChecker};
 use frontend::{parser::Parser, tokens::Tokens};
 
 fn main() -> io::Result<()> {
@@ -42,6 +42,9 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
         return error.report(file_path, &read_to_string(file_path)?)
     };
 
+    let value = Evaluator::eval_module_from_main(&resolved_module);
+
+    println!(" = {value}");
     Ok(())
 }
 
@@ -51,6 +54,7 @@ fn start_repl() -> io::Result<()> {
     let module = Module::default();
     let mut resolver = NameResolver::new(&module);
     let mut type_checker = TypeChecker::new(&module);
+    let mut evaluator = Evaluator::new(&module);
 
     loop {
         write!(stdout, "> ")?;
@@ -90,7 +94,9 @@ fn start_repl() -> io::Result<()> {
             }
         };
 
-        println!(" : {typ}")
+        let value = evaluator.eval_expr(&resolved_expression);
+
+        println!(" {value} : {typ}")
     }
 }
 
