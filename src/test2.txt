@@ -7,3 +7,7 @@ func nat(Nat) -> Nat
 
 func abo(innerfile::InnerType) -> innerfile::InnerType
     = x -> innerfile::InnerType::InnerType()
+
+func add(Nat, Nat) -> Nat
+    = n, Nat::Zero()  -> n
+    | n, Nat::Succ(m) -> Nat::Succ(add(n, m))

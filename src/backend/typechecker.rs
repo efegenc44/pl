@@ -18,25 +18,23 @@ impl TypeChecker {
 
         // NOTE: Order here is important! (imports => types => constructors => functions)
         type_checker.import_interface(&module.imports);
-        type_checker.type_interface(&module.types);
-        type_checker.constructor_interface(&module.types);
-        type_checker.function_interface(&module.functions);
+        type_checker.type_interface(None, &module.types);
+        type_checker.constructor_interface(None, &module.types);
+        type_checker.function_interface(None, &module.functions);
 
         type_checker
     }
 
-    pub fn type_check_module(module: &Module) -> TypeCheckResult<Interface> {
-        let mut type_checker = Self::new(module);
-
+    pub fn type_check_module(&mut self, name: Option<Symbol>, module: &Module) -> TypeCheckResult<()> {
         for import in module.imports.values() {
-            Self::type_check_import(import)?;
+            self.type_check_import(import)?;
         }
 
         for function in module.functions.values() {
-            type_checker.type_check_function(function)?;
+            self.type_check_function(name.clone(), function)?;
         }
 
-        Ok(type_checker.interface)
+        Ok(())
     }
 
     pub fn type_check_expr(&mut self, expr: &Expression) -> TypeCheckResult<Type> {
@@ -120,57 +118,25 @@ impl TypeChecker {
     fn type_check_access(&self, Access { path, namespace }: &Access) -> TypeCheckResult<Type> {
         match &path[..] {
             [_] | [] => unreachable!(),
-            [from, name] => {
+            [a@.., from, name] => {
                 match namespace {
                     Namespace::Type => {
-                        // TODO: If constructor does not take any arguments, does not return a function type
-                        let ret = self.interface.types[&from.data].clone();
-                        let params = self.interface.constructors[&from.data][&name.data].clone();
-                        Ok(Type::Function { params, ret: Box::new(ret) })
+                        if a.is_empty() {
+                            // TODO: If constructor does not take any arguments, does not return a function type
+                            let ret = self.interface.types[&from.data].clone();
+                            let params = self.interface.constructors[&from.data][&name.data].clone();
+                            Ok(Type::Function { params, ret: Box::new(ret) })
+                        } else {
+                            let interface = &self.interface.imports[&a.last().unwrap().data];
+                            // TODO: If constructor does not take any arguments, does not return a function type
+                            let ret = interface.types[&from.data].clone();
+                            let params = interface.constructors[&from.data][&name.data].clone();
+                            Ok(Type::Function { params, ret: Box::new(ret) })
+                        }
+
                     }
                     Namespace::Module => {
-                        let ImportTypes::Module { functions, .. } = &self.interface.imports[&from.data] else {
-                            unreachable!()
-                        };
-
-                        let (params, ret) = functions[&name.data].clone();
-                        Ok(Type::Function { params, ret: Box::new(ret) })
-                    },
-                    Namespace::Undetermined => unreachable!(),
-                }
-            }
-            [groups@.., from, name] => {
-                let first = &groups.first().unwrap();
-                let mut current_import = &self.interface.imports[&first.data];
-
-                for module in &groups[1..] {
-                    let ImportTypes::Group(modules) = current_import else {
-                        unreachable!()
-                    };
-
-                    current_import = &modules[&module.data];
-                }
-
-                match namespace {
-                    Namespace::Type => {
-                        let ImportTypes::Module { types, constructors, .. } = current_import else {
-                            unreachable!()
-                        };
-
-                        let ret = types[&from.data].clone();
-                        let params = constructors[&from.data][&name.data].clone();
-                        Ok(Type::Function { params, ret: Box::new(ret) })
-                    }
-                    Namespace::Module => {
-                        let ImportTypes::Group(modules) = current_import else {
-                            unreachable!()
-                        };
-
-                        let ImportTypes::Module { functions, .. } = &modules[&from.data] else {
-                            unreachable!()
-                        };
-
-                        let (params, ret) = functions[&name.data].clone();
+                        let (params, ret) = (&self.interface.imports[&from.data].functions)[&name.data].clone();
                         Ok(Type::Function { params, ret: Box::new(ret) })
                     },
                     Namespace::Undetermined => unreachable!(),
@@ -262,40 +228,18 @@ impl TypeChecker {
             [from] => {
                 self.interface.types[&from.data].clone()
             }
-            [from, name] => {
-                let ImportTypes::Module { types, .. } = &self.interface.imports[&from.data] else {
-                    unreachable!()
-                };
-
-                types[&name.data].clone()
-            }
-            [modules@.., before, last] => {
-                let from = &modules.first().unwrap();
-                let mut current_import = &self.interface.imports[&from.data];
-
-                for module in &modules[1..] {
-                    let ImportTypes::Group(modules) = current_import else {
-                        unreachable!()
-                    };
-
-                    current_import = &modules[&module.data];
-                }
-
-                let ImportTypes::Group(modules) = current_import else {
-                    unreachable!()
-                };
-
-                let ImportTypes::Module { types, .. } = &modules[&before.data] else {
-                    unreachable!()
-                };
-
-                types[&last.data].clone()
+            [.., from, name] => {
+                (&self.interface.imports[&from.data].types)[&name.data].clone()
             }
         }
     }
 
-    fn type_check_function(&mut self, Function { name, params:_ , ret: _, branches }: &Function) -> TypeCheckResult<()> {
-        let (params, ret) = self.interface.functions[&name.data].clone();
+    fn type_check_function(&mut self, module_name: Option<Symbol>, Function { name, params:_ , ret: _, branches }: &Function) -> TypeCheckResult<()> {
+        let (params, ret) = if let Some(module_name) = module_name.clone() {
+            self.interface.imports[&module_name].functions[&name.data].clone()
+        } else {
+            self.interface.functions[&name.data].clone()
+        };
 
         for (patterns, body) in branches {
             let mut local_count = 0;
@@ -310,10 +254,10 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn type_check_import(Import { parts, kind, directs: _ }: &Import) -> TypeCheckResult<()> {
+    fn type_check_import(&mut self, Import { parts, kind, directs: _ }: &Import) -> TypeCheckResult<()> {
         match kind {
             module::ImportKind::File(module) => {
-                Self::type_check_module(module).map_err(|error| {
+                self.type_check_module(Some(parts.last().unwrap().data.clone()), module).map_err(|error| {
                     // TODO: Do not hardcode the file extension.
                     let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
                         acc.push('\\');
@@ -333,7 +277,7 @@ impl TypeChecker {
             },
             module::ImportKind::Folder(imports) => {
                 for (_, import) in imports {
-                    Self::type_check_import(import)?;
+                    self.type_check_import(import)?;
                 }
             },
         }
@@ -341,13 +285,17 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn type_interface(&mut self, types: &HashMap<Symbol, module::Type>) {
+    fn type_interface(&mut self, module_name: Option<Symbol>, types: &HashMap<Symbol, module::Type>) {
         for module::Type { name, consts: _ } in types.values() {
-            self.interface.types.insert(name.data.clone(), Type::Custom(name.data.clone()));
+            if let Some(module_name) = module_name.clone() {
+                self.interface.imports.get_mut(&module_name).unwrap().types.insert(name.data.clone(), Type::Custom(name.data.clone()));
+            } else{
+                self.interface.types.insert(name.data.clone(), Type::Custom(name.data.clone()));
+            }
         }
     }
 
-    fn constructor_interface(&mut self, types: &HashMap<Symbol, module::Type>) {
+    fn constructor_interface(&mut self, module_name: Option<Symbol>, types: &HashMap<Symbol, module::Type>) {
         for module::Type { name, consts } in types.values() {
             let mut map = HashMap::new();
             for (name, params) in consts {
@@ -357,11 +305,16 @@ impl TypeChecker {
                     .collect();
                 map.insert(name.data.clone(), params);
             }
-            self.interface.constructors.insert(name.data.clone(), map);
+
+            if let Some(module_name) = module_name.clone() {
+                self.interface.imports.get_mut(&module_name).unwrap().constructors.insert(name.data.clone(), map);
+            } else{
+                self.interface.constructors.insert(name.data.clone(), map);
+            }
         }
     }
 
-    fn function_interface(&mut self, functions: &HashMap<Symbol, Function>) {
+    fn function_interface(&mut self, module_name: Option<Symbol>, functions: &HashMap<Symbol, Function>) {
         for Function { name, params, ret, branches: _ } in functions.values() {
             let function_type = (
                 params
@@ -371,30 +324,34 @@ impl TypeChecker {
                 ret.as_ref().map_or(Type::Nothing, |ret| self.eval_type_expr(ret))
             );
 
-            self.interface.functions.insert(name.data.clone(), function_type);
+            if let Some(module_name) = module_name.clone() {
+                self.interface.imports.get_mut(&module_name).unwrap().functions.insert(name.data.clone(), function_type);
+            } else{
+                self.interface.functions.insert(name.data.clone(), function_type);
+            }
         }
     }
 
-    fn get_import_types(Import { parts: _, kind, directs: _ }: &Import) -> ImportTypes {
-            match kind {
-                module::ImportKind::File(module) => {
-                    let resolver = Self::new(&module);
-                    ImportTypes::Module {
-                        functions: resolver.interface.functions,
-                        types: resolver.interface.types,
-                        constructors: resolver.interface.constructors,
-                    }
-                },
-                module::ImportKind::Folder(imports) => {
-                    let modules = imports.iter().map(|(name, import)| (name.clone(), Self::get_import_types(import))).collect();
-                    ImportTypes::Group(modules)
-                },
-            }
+    fn get_import_types(&mut self, name: Symbol, Import { parts: _, kind, directs: _ }: &Import) {
+        match kind {
+            module::ImportKind::File(module) => {
+                // NOTE: Order here is important! (imports => types => constructors => functions)
+                self.interface.imports.insert(name.clone(), ImportTypes::default());
+
+                self.import_interface(&module.imports);
+                self.type_interface(Some(name.clone()), &module.types);
+                self.constructor_interface(Some(name.clone()), &module.types);
+                self.function_interface(Some(name), &module.functions);
+            },
+            module::ImportKind::Folder(imports) => {
+                self.import_interface(imports);
+            },
+        }
     }
 
     fn import_interface(&mut self, imports: &HashMap<Box<str>, Import>) {
         for (name, import) in imports {
-            self.interface.imports.insert(name.clone(), Self::get_import_types(import));
+            self.get_import_types(name.clone(), import);
         }
     }
 }
@@ -440,11 +397,9 @@ pub struct Interface {
     constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
 }
 
-enum ImportTypes {
-    Module {
-        functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
-        types: HashMap<Symbol, typ::Type>,
-        constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
-    },
-    Group(HashMap<Symbol, ImportTypes>)
+#[derive(Default, Debug)]
+pub struct ImportTypes {
+    functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
+    types: HashMap<Symbol, typ::Type>,
+    constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
 }

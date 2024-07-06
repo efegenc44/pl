@@ -15,18 +15,20 @@ use super::{
 pub struct NameResolver {
     names: Names,
     locals: Vec<Symbol>,
+    module_path: Option<Vec<Spanned<Symbol>>>
 }
 
 impl NameResolver {
-    pub fn new(module: &Module) -> Self {
+    pub fn new(module: &Module, module_path: Option<Vec<Spanned<Symbol>>>) -> Self {
         Self {
             names: Self::collect_names(module),
             locals: Vec::new(),
+            module_path,
         }
     }
 
-    pub fn resolve_module(module: Module) -> ResolutionResult<Module> {
-        let mut resolver = Self::new(&module);
+    pub fn resolve_module(module: Module, module_path: Option<Vec<Spanned<Symbol>>>) -> ResolutionResult<Module> {
+        let mut resolver = Self::new(&module, module_path);
 
         Ok(Module {
             functions: resolver.resolve_functions(module.functions)?,
@@ -107,9 +109,19 @@ impl NameResolver {
         let bound = if let Some(indice) = self.locals.iter().rev().position(|local| local == &identifier.data) {
             Bound::Local(indice)
         } else if self.names.functions.contains(&identifier.data) {
-            Bound::Global(identifier.data.clone())
+            if let Some(mut path) = self.module_path.clone() {
+                path.push(identifier.clone());
+                Bound::Absolute(path)
+            } else {
+                Bound::Global(identifier.data.clone())
+            }
         } else if let Some(path) = self.names.func_directs.get(&identifier.data) {
-            Bound::Absolute(path.clone())
+            if let Some(mut mpath) = self.module_path.clone() {
+                mpath.extend(path.clone());
+                Bound::Absolute(mpath)
+            } else {
+                Bound::Absolute(path.clone())
+            }
         } else {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
@@ -139,6 +151,7 @@ impl NameResolver {
         let type_expr = type_expr.map(|type_expr| self.resolve_type_expr(type_expr)).transpose()?;
         let mut resolved_branches = vec![];
         for (pattern, body) in branches {
+            let pattern = self.resolve_pattern(pattern);
             let local_count = self.push_names_in_pattern(&pattern);
             let body = Box::new(self.resolve_expr(*body)?);
             self.locals.truncate(self.locals.len() - local_count);
@@ -150,6 +163,11 @@ impl NameResolver {
     }
 
     fn resolve_lambda(&mut self, Lambda { params, body }: Lambda) -> ResolutionResult<Expression> {
+        let params = params
+            .into_iter()
+            .map(|param| self.resolve_pattern(param))
+            .collect::<Vec<_>>();
+
         let local_count = params
             .iter()
             .map(|param| self.push_names_in_pattern(param))
@@ -222,6 +240,14 @@ impl NameResolver {
             },
         };
 
+
+        let path = if let Some(mut module_path) = self.module_path.clone() {
+            module_path.extend(path);
+            module_path
+        } else {
+            path
+        };
+
         Ok(Expression::Access(Access { path, namespace }))
     }
 
@@ -236,9 +262,19 @@ impl NameResolver {
     fn resolve_type_identifier(&self, identifier: Spanned<Symbol>) -> ResolutionResult<TypeExpression> {
         // TODO: Local type variables for polymorphic types.
         let bound = if self.names.types.contains_key(&identifier.data) {
-            Bound::Global(identifier.data.clone())
+            if let Some(mut path) = self.module_path.clone() {
+                path.push(identifier.clone());
+                Bound::Absolute(path)
+            } else {
+                Bound::Global(identifier.data.clone())
+            }
         } else if let Some(path) = self.names.type_directs.get(&identifier.data) {
-            Bound::Absolute(path.clone())
+            if let Some(mut mpath) = self.module_path.clone() {
+                mpath.extend(path.clone());
+                Bound::Absolute(mpath)
+            } else {
+                Bound::Absolute(path.clone())
+            }
         } else {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
@@ -308,9 +344,15 @@ impl NameResolver {
         let mut resolved_branches = vec![];
         for (patterns, body) in branches {
             let mut local_count = 0;
+            let patterns = patterns
+                .into_iter()
+                .map(|pattern| self.resolve_pattern(pattern))
+                .collect::<Vec<_>>();
+
             for pattern in &patterns {
                 local_count += self.push_names_in_pattern(pattern);
             }
+
             let body = self.resolve_expr(body)?;
             self.locals.truncate(self.locals.len() - local_count);
             resolved_branches.push((patterns, body));
@@ -350,7 +392,7 @@ impl NameResolver {
         for (name, Import { parts, kind, directs }) in imports {
             match kind {
                 module::ImportKind::File(module) => {
-                    let module = NameResolver::resolve_module(module).map_err(|error| {
+                    let module = NameResolver::resolve_module(module, Some(vec![parts.last().unwrap().clone()])).map_err(|error| {
                         // TODO: Do not hardcode the file extension.
                         let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
                             acc.push('\\');
@@ -380,21 +422,37 @@ impl NameResolver {
         Ok(resolved_imports)
     }
 
+    fn resolve_pattern(&mut self, pattern: Pattern) -> Pattern {
+        match pattern {
+            Pattern::Constructor { path, params } => {
+                // TODO: Remove unwrap.
+                let Expression::Access(Access { path, namespace }) =
+                    self.resolve_access(Access { path: path.to_vec(), namespace: Namespace::Type }).unwrap() else {
+                    unreachable!()
+                };
+
+                assert!(namespace == Namespace::Type);
+
+                let path = if let Some(mut module_path) = self.module_path.clone() {
+                    module_path.extend(path);
+                    module_path
+                } else {
+                    path
+                };
+
+                Pattern::Constructor { path, params }
+            },
+            literal => literal
+        }
+    }
+
     fn push_names_in_pattern(&mut self, pattern: &Pattern) -> usize {
         match pattern {
             Pattern::Any(identifier) => {
                 self.locals.push(identifier.data.clone());
                 1
             }
-            Pattern::Constructor { path, params } => {
-                match &path[..] {
-                    [_] => todo!("cant import constructors directly right now."),
-                    path => {
-                        // TODO: Remove unwrap.
-                        self.resolve_access(Access { path: path.to_vec(), namespace: Namespace::Type }).unwrap();
-                    },
-                }
-
+            Pattern::Constructor { path: _, params } => {
                 let mut local_count = 0;
                 for param in params {
                     local_count += self.push_names_in_pattern(param);

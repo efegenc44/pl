@@ -33,12 +33,12 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    let resolved_module = match NameResolver::resolve_module(module) {
+    let resolved_module = match NameResolver::resolve_module(module, None) {
         Ok(resolved_module) => resolved_module,
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    if let Err(error) = TypeChecker::type_check_module(&resolved_module) {
+    if let Err(error) = TypeChecker::new(&resolved_module).type_check_module(None, &resolved_module) {
         return error.report(file_path, &read_to_string(file_path)?)
     };
 
@@ -52,7 +52,7 @@ fn start_repl() -> io::Result<()> {
     let mut stdout = stdout();
     let stdin = stdin();
     let module = Module::default();
-    let mut resolver = NameResolver::new(&module);
+    let mut resolver = NameResolver::new(&module, None);
     let mut type_checker = TypeChecker::new(&module);
     let mut evaluator = Evaluator::new(&module);
 

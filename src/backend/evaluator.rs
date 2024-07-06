@@ -13,8 +13,8 @@ impl Evaluator {
     pub fn new(module: &Module) -> Self {
         let mut evaluator = Self { locals: Vec::new(), values: Values::default() };
 
-        evaluator.collect_functions(&module.functions);
-        evaluator.collect_constructors(&module.types);
+        evaluator.collect_functions(None, &module.functions);
+        evaluator.collect_constructors(None, &module.types);
         evaluator.collect_imports(&module.imports);
         evaluator
     }
@@ -111,51 +111,24 @@ impl Evaluator {
     fn eval_access(&self, Access { path, namespace }: &Access) -> Value {
         match &path[..] {
             [_] | [] => unreachable!(),
-            [from, name] => {
+            [a@.., from, name] => {
                 match namespace {
                     Namespace::Type => {
-                        Value::Constructor(name.data.clone(), self.values.constructors[&from.data][&name.data].clone())
+                        if a.is_empty() {
+                            // TODO: If constructor does not take any arguments, does not return a function type
+                            let arity = self.values.constructors[&from.data][&name.data].clone();
+                            Value::Constructor(name.data.clone(), arity)
+                        } else {
+                            let interface = &self.values.imports[&a.last().unwrap().data];
+                            // TODO: If constructor does not take any arguments, does not return a function type
+                            let arity = interface.constructors[&from.data][&name.data].clone();
+                            Value::Constructor(name.data.clone(), arity)
+                        }
+
                     }
                     Namespace::Module => {
-                        let ImportValues::Module { functions, .. } = &self.values.imports[&from.data] else {
-                            unreachable!()
-                        };
-
-                        Value::Function(functions[&name.data].clone())
-                    },
-                    Namespace::Undetermined => unreachable!(),
-                }
-            }
-            [groups@.., from, name] => {
-                let first = &groups.first().unwrap();
-                let mut current_import = &self.values.imports[&first.data];
-
-                for module in &groups[1..] {
-                    let ImportValues::Group(modules) = current_import else {
-                        unreachable!()
-                    };
-
-                    current_import = &modules[&module.data];
-                }
-
-                match namespace {
-                    Namespace::Type => {
-                        let ImportValues::Module { constructors, .. } = current_import else {
-                            unreachable!()
-                        };
-
-                        Value::Constructor(name.data.clone(), constructors[&from.data][&name.data].clone())
-                    }
-                    Namespace::Module => {
-                        let ImportValues::Group(modules) = current_import else {
-                            unreachable!()
-                        };
-
-                        let ImportValues::Module { functions, .. } = &modules[&from.data] else {
-                            unreachable!()
-                        };
-
-                        Value::Function(functions[&name.data].clone())
+                        let function = (&self.values.imports[&from.data].functions)[&name.data].clone();
+                        Value::Function(function)
                     },
                     Namespace::Undetermined => unreachable!(),
                 }
@@ -207,42 +180,50 @@ impl Evaluator {
         }
     }
 
-    fn collect_functions(&mut self, functions: &HashMap<Symbol, Function>) {
+    fn collect_functions(&mut self, module_name: Option<Symbol>, functions: &HashMap<Symbol, Function>) {
         for Function { name, branches, .. } in functions.values() {
-            self.values.functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
+            if let Some(module_name) = module_name.clone() {
+                self.values.imports.get_mut(&module_name).unwrap().functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
+            } else{
+                self.values.functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
+            }
         }
     }
 
-    fn collect_constructors(&mut self, types: &HashMap<Symbol, module::Type>) {
+    fn collect_constructors(&mut self, module_name: Option<Symbol>, types: &HashMap<Symbol, module::Type>) {
         for module::Type { name, consts } in types.values() {
             let mut map = HashMap::new();
             for (name, params) in consts {
                 let params = params.len();
                 map.insert(name.data.clone(), params);
             }
-            self.values.constructors.insert(name.data.clone(), map);
+
+            if let Some(module_name) = module_name.clone() {
+                self.values.imports.get_mut(&module_name).unwrap().constructors.insert(name.data.clone(), map);
+            } else{
+                self.values.constructors.insert(name.data.clone(), map);
+            }
         }
     }
 
-    fn get_import_values(Import { parts: _, kind, directs: _ }: &Import) -> ImportValues {
+    fn get_import_values(&mut self, name: Symbol, Import { parts: _, kind, directs: _ }: &Import) {
         match kind {
             module::ImportKind::File(module) => {
-                let evaluator = Self::new(&module);
-                ImportValues::Module {
-                    functions: evaluator.values.functions,
-                    constructors: evaluator.values.constructors,
-                }
+                self.values.imports.insert(name.clone(), ImportValues::default());
+
+                self.collect_functions(Some(name.clone()), &module.functions);
+                self.collect_constructors(Some(name.clone()), &module.types);
+                self.collect_imports(&module.imports);
             },
             module::ImportKind::Folder(imports) => {
-                let modules = imports.iter().map(|(name, import)| (name.clone(), Self::get_import_values(import))).collect();
-                ImportValues::Group(modules)
+                self.collect_imports(imports);
             },
         }
     }
 
     fn collect_imports(&mut self, imports: &HashMap<Symbol, Import>) {
         for (name, import) in imports {
-            self.values.imports.insert(name.clone(), Self::get_import_values(import));
+            self.get_import_values(name.clone(), import);
         }
     }
 }
@@ -254,10 +235,8 @@ pub struct Values {
     constructors: HashMap<Symbol, HashMap<Symbol, usize>>,
 }
 
-enum ImportValues {
-    Module {
-        functions: HashMap<Symbol, FunctionValue>,
-        constructors: HashMap<Symbol, HashMap<Symbol, usize>>,
-    },
-    Group(HashMap<Symbol, ImportValues>)
+#[derive(Debug, Default)]
+struct ImportValues {
+    functions: HashMap<Symbol, FunctionValue>,
+    constructors: HashMap<Symbol, HashMap<Symbol, usize>>,
 }
