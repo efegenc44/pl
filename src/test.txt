@@ -1,5 +1,5 @@
-import src::test2 (Nat, abo)
-import src::testmodule
+import test2 (Nat, abo)
+import testmodule
 
 func nat(Nat) -> Nat
     = x -> test2::Nat::Succ(x)

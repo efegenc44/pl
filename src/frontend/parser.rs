@@ -29,13 +29,17 @@ const OPERATORS: [(Token, Associativity, usize); 5] = [
 ];
 
 pub struct Parser<'source> {
+    file_path: PathBuf,
     tokens: Peekable<Tokens<'source>>,
 }
 
 impl<'source> Parser<'source> {
-    pub fn new(tokens: Tokens<'source>) -> Self {
+    pub fn new(tokens: Tokens<'source>, mut file_path: PathBuf) -> Self {
+        file_path.pop();
+
         Self {
             tokens: tokens.peekable(),
+            file_path,
         }
     }
 
@@ -345,8 +349,7 @@ impl<'source> Parser<'source> {
             parts.push(self.expect_identifier()?);
         }
 
-        // TODO: imports should be relative to the file's position not the exe's position.
-        let import_path = parts.iter().fold(PathBuf::from("."), |mut acc, part| {
+        let import_path = parts.iter().fold(self.file_path.clone(), |mut acc, part| {
             acc.push(&*part.data);
             acc
         });
@@ -381,7 +384,7 @@ impl<'source> Parser<'source> {
             // TODO: Remove unwrap.
             let import_file = read_to_string(&import_path).unwrap();
             let import =
-                Parser::new(Tokens::new(&import_file))
+                Parser::new(Tokens::new(&import_file), import_path.clone())
                     .declarations()
                     .map_err(|error| {
                         let first = parts.first().unwrap().span;

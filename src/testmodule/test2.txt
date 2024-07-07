@@ -1,0 +1,1 @@
+type Test2Type = Test2Type

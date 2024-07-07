@@ -4,7 +4,7 @@ mod frontend;
 use std::{
     env::args,
     fs::read_to_string,
-    io::{self, stderr, stdin, stdout, Write},
+    io::{self, stderr, stdin, stdout, Write}, path::PathBuf,
 };
 
 use backend::{evaluator::Evaluator, module::Module, nameresolver::NameResolver, typechecker::TypeChecker};
@@ -23,7 +23,7 @@ fn main() -> io::Result<()> {
 fn start_from_file(file_path: &str) -> io::Result<()> {
     let file = read_to_string(file_path)?;
 
-    let declarations = match Parser::new(Tokens::new(&file)).declarations() {
+    let declarations = match Parser::new(Tokens::new(&file), PathBuf::from(file_path)).declarations() {
         Ok(declarations) => declarations,
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
@@ -70,7 +70,7 @@ fn start_repl() -> io::Result<()> {
             _ => (),
         }
 
-        let expression = match Parser::new(Tokens::new(input)).expression() {
+        let expression = match Parser::new(Tokens::new(input), PathBuf::new()).expression() {
             Ok(expression) => expression,
             Err(error) => {
                 error.report("REPL", input)?;

@@ -1,4 +1,4 @@
-import src::testmodule::innermodule::innerfile
+import testmodule::innermodule::innerfile
 
 type Nat = Zero | Succ(Nat)
 
