@@ -1,0 +1,9 @@
+import nat (Nat)
+import midnat (add, mul)
+
+func main() -> Nat = x ->
+    midnat::add(
+        nat::Nat::Zero(),
+        nat::Nat::Succ(nat::Nat::Zero())
+    )
+

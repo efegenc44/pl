@@ -184,10 +184,10 @@ impl<'source> Parser<'source> {
                 vec![]
             };
 
-            Ok(Pattern::Constructor { path, params })
+            Ok(Pattern::Constructor { path, params, real_path: vec![] })
         } else if self.next_peek_is(&Token::OpeningParenthesis) {
             let params = self.comma_seperated_until(Self::pattern, Token::ClosingParenthesis)?;
-            Ok(Pattern::Constructor { path: vec![identifier], params })
+            Ok(Pattern::Constructor { path: vec![identifier], params, real_path: vec![] })
         } else {
             Ok(Pattern::Any(Spanned::new(identifier.data, identifier.span)))
         }
@@ -204,6 +204,7 @@ impl<'source> Parser<'source> {
             Expression::Access(Access {
                 path,
                 namespace: Namespace::Undetermined,
+                real_path: Vec::new(),
             })
         } else {
             Expression::Identifier(identifier, Bound::None)
@@ -218,7 +219,7 @@ impl<'source> Parser<'source> {
                 path.push(self.expect_identifier()?);
             }
 
-            TypeExpression::Access(path)
+            TypeExpression::Access(path, vec![])
         } else {
             TypeExpression::Identifier(identifier, Bound::None)
         })
@@ -354,7 +355,7 @@ impl<'source> Parser<'source> {
             acc
         });
 
-        let kind = Self::parse_import(import_path, &parts)?;
+        let kind = Self::parse_import(import_path.clone(), &parts)?;
 
         let directs = if self.next_peek_is(&Token::OpeningParenthesis) {
             self.comma_seperated_until(Self::expect_identifier, Token::ClosingParenthesis)?
@@ -362,7 +363,7 @@ impl<'source> Parser<'source> {
             vec![]
         };
 
-        Ok(Declaration::Import { parts, kind, directs })
+        Ok(Declaration::Import { parts, kind, directs, path: import_path.to_str().unwrap().into() })
     }
 
     fn parse_import(mut import_path: PathBuf, parts: &[Spanned<Symbol>]) -> ParseResult<ImportKind> {
@@ -373,7 +374,7 @@ impl<'source> Parser<'source> {
                 let kind = Self::parse_import(path.clone(), parts)?;
                 path.set_extension("");
                 let name =  path.file_name().unwrap().to_str().unwrap().into();
-                imports.push((name, kind));
+                imports.push((name, (kind, path.to_str().unwrap().into())));
             }
 
             Ok(ImportKind::Folder(imports))

@@ -77,6 +77,9 @@ impl Spanned<ResolutionError> {
         match &self.data {
             ResolutionError::ImportError { import_path, error } => {
                 report(self, source_name, source, "name resolution")?;
+
+                println!("{}", error);
+
                 error.report(import_path, &read_to_string(import_path.as_ref())?)
             }
             _ => report(self, source_name, source, "name resolution"),

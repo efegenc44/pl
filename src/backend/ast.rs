@@ -55,6 +55,7 @@ pub struct Lambda {
 #[derive(Clone, Debug)]
 pub struct Access {
     pub path: Vec<Spanned<Symbol>>,
+    pub real_path: Vec<Symbol>,
     pub namespace: Namespace,
 }
 
@@ -84,7 +85,7 @@ impl Expression {
             Self::Application(Application { expr, args: _ }) => expr.span(),
             Self::Let(Let { type_expr: _, expr: _, branches }) => branches.last().unwrap().1.span(),
             Self::Lambda(Lambda { params: _, body }) => body.span(),
-            Self::Access(Access { path, namespace: _ }) => path.first().unwrap().span.extend(path.last().unwrap().span),
+            Self::Access(Access { path, real_path: _, namespace: _ }) => path.first().unwrap().span.extend(path.last().unwrap().span),
         }
     }
 }
@@ -99,8 +100,7 @@ pub enum Namespace {
 #[derive(Clone, Debug)]
 pub enum Bound {
     Local(usize),
-    Global(Symbol),
-    Absolute(Vec<Spanned<Symbol>>),
+    Absolute(Vec<Symbol>),
     None,
 }
 
@@ -108,8 +108,15 @@ impl Display for Bound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Local(id) => write!(f, "Local {id}"),
-            Self::Global(name) => write!(f, "Global {name}"),
-            Self::Absolute(_) => todo!(),
+            Self::Absolute(path) => {
+                let [rest@.., last] = &path[..] else {
+                    unreachable!()
+                };
+                for part in rest {
+                    write!(f, "{part}::")?;
+                }
+                write!(f, "{last}")
+            },
             Self::None => write!(f, "None"),
         }
     }
@@ -123,6 +130,7 @@ pub enum Pattern {
     Float(Spanned<Symbol>),
     Constructor {
         path: Vec<Spanned<Symbol>>,
+        real_path: Vec<Symbol>,
         params: Vec<Pattern>,
     }
 }
@@ -134,7 +142,7 @@ impl Pattern {
             | Self::String(lexeme)
             | Self::Integer(lexeme)
             | Self::Float(lexeme) => lexeme.span,
-            Self::Constructor { path, params: _ } => {
+            Self::Constructor { path, params: _, real_path: _ } => {
                 path.first().unwrap().span.extend(path.last().unwrap().span)
             },
         }
@@ -152,6 +160,7 @@ pub enum Declaration {
         parts: Vec<Spanned<Symbol>>,
         kind: ImportKind,
         directs: Vec<Spanned<Symbol>>,
+        path: Symbol,
     },
     Type {
         name: Spanned<Symbol>,
@@ -161,7 +170,7 @@ pub enum Declaration {
 
 pub enum ImportKind {
     File(Vec<Declaration>),
-    Folder(Vec<(Symbol, ImportKind)>)
+    Folder(Vec<(Symbol, (ImportKind, Symbol))>)
 }
 
 #[derive(Clone, Debug)]
@@ -174,5 +183,5 @@ pub struct TypeFunction {
 pub enum TypeExpression {
     Identifier(Spanned<Symbol>, Bound),
     Function(TypeFunction),
-    Access(Vec<Spanned<Symbol>>)
+    Access(Vec<Spanned<Symbol>>, Vec<Symbol>)
 }

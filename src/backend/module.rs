@@ -9,10 +9,11 @@ pub struct Module {
     pub functions: HashMap<Symbol, Function>,
     pub imports: HashMap<Symbol, Import>,
     pub types: HashMap<Symbol, Type>,
+    pub path: Symbol,
 }
 
 impl Module {
-    pub fn new(declarations: Vec<Declaration>) -> ModuleResult<Self> {
+    pub fn new(declarations: Vec<Declaration>, path: Option<Symbol>) -> ModuleResult<Self> {
         let mut functions = HashMap::new();
         let mut imports = HashMap::new();
         let mut types = HashMap::new();
@@ -26,9 +27,9 @@ impl Module {
                         return Err(ModuleError::DuplicateDeclaration(name.data.clone()).attach(name.span))
                     }
                 }
-                Declaration::Import { parts, kind, directs } => {
+                Declaration::Import { parts, kind, directs, path } => {
                     let module_name = parts.last().unwrap().data.clone();
-                    imports.insert(module_name, Import { kind: Self::import_kind(kind, &parts)?, parts, directs });
+                    imports.insert(module_name, Import { kind: Self::import_kind(kind, &parts, path.clone())?, parts, directs });
                 },
                 Declaration::Type { name, consts } => {
                     if !types.contains_key(&name.data) {
@@ -40,13 +41,13 @@ impl Module {
             }
         }
 
-        Ok(Self { functions, imports, types })
+        Ok(Self { functions, imports, types, path: path.unwrap_or(Box::default()) })
     }
 
-    fn import_kind(kind: ast::ImportKind, parts: &[Spanned<Symbol>]) -> ModuleResult<ImportKind> {
+    fn import_kind(kind: ast::ImportKind, parts: &[Spanned<Symbol>], path: Symbol) -> ModuleResult<ImportKind> {
         match kind {
             ast::ImportKind::File(import) => {
-                let module = Module::new(import)
+                let module = Module::new(import, Some(path.clone()))
                     .map_err(|error| {
                         // TODO: Do not hardcode the file extension.
                         let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
@@ -65,16 +66,16 @@ impl Module {
                         .attach(span)
                     })?;
 
-                Ok(ImportKind::File(module))
+                Ok(ImportKind::File((module, path)))
             },
             ast::ImportKind::Folder(imports) => {
                 let mut map = HashMap::new();
-                for (name, kind) in imports {
-                    let kind = Self::import_kind(kind, parts)?;
+                for (name, (kind, path)) in imports {
+                    let kind = Self::import_kind(kind, parts, path)?;
                     map.insert(name, Import { parts: parts.to_vec(), kind, directs: vec![] });
                 }
 
-                Ok(ImportKind::Folder(map))
+                Ok(ImportKind::Folder((map, path)))
             },
         }
     }
@@ -120,6 +121,6 @@ pub struct Type {
 }
 
 pub enum ImportKind {
-    File(Module),
-    Folder(HashMap<Symbol, Import>)
+    File((Module, Symbol)),
+    Folder((HashMap<Symbol, Import>, Symbol))
 }

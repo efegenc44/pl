@@ -23,22 +23,24 @@ fn main() -> io::Result<()> {
 fn start_from_file(file_path: &str) -> io::Result<()> {
     let file = read_to_string(file_path)?;
 
+    let mut pathbuf = PathBuf::from(file_path);
     let declarations = match Parser::new(Tokens::new(&file), PathBuf::from(file_path)).declarations() {
         Ok(declarations) => declarations,
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    let module = match Module::new(declarations) {
+    pathbuf.pop();
+    let module = match Module::new(declarations, None) {
         Ok(module) => module,
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    let resolved_module = match NameResolver::resolve_module(module, None) {
+    let resolved_module = match NameResolver::resolve_module(module, Box::default()) {
         Ok(resolved_module) => resolved_module,
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    if let Err(error) = TypeChecker::new(&resolved_module).type_check_module(None, &resolved_module) {
+    if let Err(error) = TypeChecker::new(&resolved_module).type_check_module(&resolved_module) {
         return error.report(file_path, &read_to_string(file_path)?)
     };
 
@@ -52,7 +54,7 @@ fn start_repl() -> io::Result<()> {
     let mut stdout = stdout();
     let stdin = stdin();
     let module = Module::default();
-    let mut resolver = NameResolver::new(&module, None);
+    let mut resolver = NameResolver::new(&module, Box::default());
     let mut type_checker = TypeChecker::new(&module);
     let mut evaluator = Evaluator::new(&module);
 

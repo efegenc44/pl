@@ -51,9 +51,8 @@ impl Evaluator {
     fn eval_identifier(&self, bound: &Bound) -> Value {
         match bound {
             Bound::Local(indice) => self.locals[self.locals.len() - 1 - indice].clone(),
-            Bound::Global(identifier) =>  Value::Function(self.values.functions[identifier].clone()),
             // TODO: Remove to_vec
-            Bound::Absolute(path) => self.eval_access(&Access { path: path.to_vec(), namespace: Namespace::Module }),
+            Bound::Absolute(path) => self.eval_access(&Access { path: vec![], namespace: Namespace::Module, real_path: path.clone() }),
             Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
         }
     }
@@ -108,26 +107,29 @@ impl Evaluator {
         }
     }
 
-    fn eval_access(&self, Access { path, namespace }: &Access) -> Value {
-        match &path[..] {
-            [_] | [] => unreachable!(),
+    fn eval_access(&self, Access { path: _, namespace, real_path }: &Access) -> Value {
+        match &real_path[..] {
+            [] => unreachable!(),
+            [name] => Value::Function(self.values.functions[name].clone()),
             [a@.., from, name] => {
                 match namespace {
                     Namespace::Type => {
                         if a.is_empty() {
                             // TODO: If constructor does not take any arguments, does not return a function type
-                            let arity = self.values.constructors[&from.data][&name.data].clone();
-                            Value::Constructor(name.data.clone(), arity)
+                            let arity = self.values.constructors[from][name].clone();
+                            Value::Constructor(name.clone(), arity)
                         } else {
-                            let interface = &self.values.imports[&a.last().unwrap().data];
+                            let interface = &self.values.imports[a];
                             // TODO: If constructor does not take any arguments, does not return a function type
-                            let arity = interface.constructors[&from.data][&name.data].clone();
-                            Value::Constructor(name.data.clone(), arity)
+                            let arity = interface.constructors[from][name].clone();
+                            Value::Constructor(name.clone(), arity)
                         }
 
                     }
                     Namespace::Module => {
-                        let function = (&self.values.imports[&from.data].functions)[&name.data].clone();
+                        let mut a = a.to_vec();
+                        a.push(from.clone());
+                        let function = (&self.values.imports[&a].functions)[name].clone();
                         Value::Function(function)
                     },
                     Namespace::Undetermined => unreachable!(),
@@ -142,7 +144,7 @@ impl Evaluator {
             (Pattern::String(str1), Value::String(str2)) => &str1.data == &str2.clone().into_boxed_str(),
             (Pattern::Integer(int1), Value::Integer(int2)) => &int1.data.to_string().parse::<isize>().unwrap() == int2,
             (Pattern::Float(float1), Value::Float(float2)) => &float1.data.to_string().parse::<f32>().unwrap() == float2,
-            (Pattern::Constructor { path, params }, Value::Custom { constructor, values }) => {
+            (Pattern::Constructor { path, params, real_path: _ }, Value::Custom { constructor, values }) => {
                 if &path.last().unwrap().data != constructor {
                     return false;
                 }
@@ -168,7 +170,7 @@ impl Evaluator {
             (Pattern::String(_), Value::String(_)) |
             (Pattern::Integer(_), Value::Integer(_)) |
             (Pattern::Float(_), Value::Float(_)) => 0,
-            (Pattern::Constructor { path: _, params }, Value::Custom { constructor: _, values }) => {
+            (Pattern::Constructor { path: _, params, real_path: _ }, Value::Custom { constructor: _, values }) => {
                 let mut local_count = 0;
                 for (param, value) in iter::zip(params, values) {
                     local_count += self.push_values_in_pattern(param, value);
@@ -180,17 +182,17 @@ impl Evaluator {
         }
     }
 
-    fn collect_functions(&mut self, module_name: Option<Symbol>, functions: &HashMap<Symbol, Function>) {
+    fn collect_functions(&mut self, module_path: Option<Vec<Symbol>>, functions: &HashMap<Symbol, Function>) {
         for Function { name, branches, .. } in functions.values() {
-            if let Some(module_name) = module_name.clone() {
-                self.values.imports.get_mut(&module_name).unwrap().functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
+            if let Some(module_path) = module_path.clone() {
+                self.values.imports.get_mut(&module_path).unwrap().functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
             } else{
                 self.values.functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
             }
         }
     }
 
-    fn collect_constructors(&mut self, module_name: Option<Symbol>, types: &HashMap<Symbol, module::Type>) {
+    fn collect_constructors(&mut self, module_path: Option<Vec<Symbol>>, types: &HashMap<Symbol, module::Type>) {
         for module::Type { name, consts } in types.values() {
             let mut map = HashMap::new();
             for (name, params) in consts {
@@ -198,32 +200,32 @@ impl Evaluator {
                 map.insert(name.data.clone(), params);
             }
 
-            if let Some(module_name) = module_name.clone() {
-                self.values.imports.get_mut(&module_name).unwrap().constructors.insert(name.data.clone(), map);
+            if let Some(module_path) = module_path.clone() {
+                self.values.imports.get_mut(&module_path).unwrap().constructors.insert(name.data.clone(), map);
             } else{
                 self.values.constructors.insert(name.data.clone(), map);
             }
         }
     }
 
-    fn get_import_values(&mut self, name: Symbol, Import { parts: _, kind, directs: _ }: &Import) {
+    fn get_import_values(&mut self, Import { parts: _, kind, directs: _ }: &Import) {
         match kind {
-            module::ImportKind::File(module) => {
-                self.values.imports.insert(name.clone(), ImportValues::default());
+            module::ImportKind::File((module, path)) => {
+                self.values.imports.insert(vec![path.clone()], ImportValues::default());
 
-                self.collect_functions(Some(name.clone()), &module.functions);
-                self.collect_constructors(Some(name.clone()), &module.types);
+                self.collect_functions(Some(vec![path.clone()]), &module.functions);
+                self.collect_constructors(Some(vec![path.clone()]), &module.types);
                 self.collect_imports(&module.imports);
             },
-            module::ImportKind::Folder(imports) => {
+            module::ImportKind::Folder((imports, _path)) => {
                 self.collect_imports(imports);
             },
         }
     }
 
     fn collect_imports(&mut self, imports: &HashMap<Symbol, Import>) {
-        for (name, import) in imports {
-            self.get_import_values(name.clone(), import);
+        for (_, import) in imports {
+            self.get_import_values(import);
         }
     }
 }
@@ -231,7 +233,7 @@ impl Evaluator {
 #[derive(Default)]
 pub struct Values {
     functions: HashMap<Symbol, FunctionValue>,
-    imports: HashMap<Symbol, ImportValues>,
+    imports: HashMap<Vec<Symbol>, ImportValues>,
     constructors: HashMap<Symbol, HashMap<Symbol, usize>>,
 }
 

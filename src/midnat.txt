@@ -1,0 +1,15 @@
+import nat (Nat)
+
+func add(Nat, Nat) -> Nat
+    = n, nat::Nat::Zero()  -> n
+    | n, nat::Nat::Succ(m) -> nat::Nat::Succ(add(n, m))
+
+func mul(Nat, Nat) -> Nat
+    = n, nat::Nat::Zero()  -> nat::Nat::Zero()
+    | n, nat::Nat::Succ(m) -> add(n, mul(n, m))
+
+func main() -> nat::Nat = x ->
+    mul(
+        nat::Nat::Succ(nat::Nat::Succ(nat::Nat::Zero())),
+        nat::Nat::Succ(nat::Nat::Succ(nat::Nat::Succ(nat::Nat::Succ(nat::Nat::Zero()))))
+    )

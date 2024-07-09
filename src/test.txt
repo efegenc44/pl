@@ -25,6 +25,8 @@ func main2() -> Nat = x ->
         test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Zero()))))
     )
 
+func a() -> testmodule::innermodule::innerfile2::InnerFileType2 = x -> testmodule::innermodule::innerfile::gjgj()
+
 func test() -> Nat = x ->
     let test2::Nat::Zero()
         = test2::Nat::Succ(test2::Nat::Succ(m)) -> m
