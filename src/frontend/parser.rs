@@ -288,7 +288,7 @@ impl<'source> Parser<'source> {
             parts.push(self.expect_identifier()?);
         }
 
-        let import_path = parts.iter().fold(self.file_path.clone(), |mut acc, part| {
+        let mut import_path = parts.iter().fold(self.file_path.clone(), |mut acc, part| {
             acc.push(&*part.data);
             acc
         });
@@ -300,6 +300,10 @@ impl<'source> Parser<'source> {
         } else {
             vec![]
         };
+
+        if matches!(kind, ImportKind::File(_)) {
+            import_path.set_extension("txt");
+        }
 
         Ok(Declaration::Import { parts, kind, directs, path: import_path.to_str().unwrap().into() })
     }

@@ -270,20 +270,13 @@ impl TypeChecker {
 
     fn type_check_import(&mut self, Import { parts, kind, directs: _ }: &Import) -> TypeCheckResult<()> {
         match kind {
-            module::ImportKind::File((module, _path)) => {
+            module::ImportKind::File((module, path)) => {
                 self.type_check_module(module).map_err(|error| {
-                    // TODO: Do not hardcode the file extension.
-                    let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
-                        acc.push('\\');
-                        acc.push_str(&part.data);
-                        acc
-                    }) + ".txt";
-
                     let first = parts.first().unwrap().span;
                     let last = parts.last().unwrap().span;
                     let span = first.extend(last);
                     TypeCheckError::ImportError {
-                        import_path: import_path.into(),
+                        import_path: path.clone().into(),
                         error: Box::new(error),
                     }
                     .attach(span)

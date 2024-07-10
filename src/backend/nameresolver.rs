@@ -382,18 +382,11 @@ impl NameResolver {
                 // dbg!(&path);
 
                 let module = NameResolver::resolve_module(module, path.clone()).map_err(|error| {
-                    // TODO: Do not hardcode the file extension.
-                    let import_path = parts.iter().fold(String::from("."), |mut acc, part| {
-                        acc.push('\\');
-                        acc.push_str(&part.data);
-                        acc
-                    }) + ".txt";
-
                     let first = parts.first().unwrap().span;
                     let last = parts.last().unwrap().span;
                     let span = first.extend(last);
                     ResolutionError::ImportError {
-                        import_path: import_path.into(),
+                        import_path: path.clone().into(),
                         error: Box::new(error),
                     }
                     .attach(span)
