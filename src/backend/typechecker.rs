@@ -252,6 +252,10 @@ impl TypeChecker {
         };
 
         for (patterns, body) in branches {
+            if patterns.len() != params.len() {
+                return Err(TypeCheckError::ArityMismatch { expected: params.len(), found: patterns.len() }.attach(name.span))
+            }
+
             let mut local_count = 0;
             for (pattern, typ) in iter::zip(patterns, &params) {
                 local_count += self.push_types_in_pattern(pattern, &typ)?;

@@ -3,4 +3,4 @@ import innerfile2
 type InnerType = InnerType
 
 func gjgj() -> innerfile2::InnerFileType2
-    = x -> innerfile2::InnerFileType2::InnerFileType2()
+    = -> innerfile2::InnerFileType2::InnerFileType2()

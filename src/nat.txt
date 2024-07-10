@@ -1,5 +1,5 @@
-func main() -> Nat
-    = x -> mul(
+func main() -> Nat = ->
+    mul(
         Nat::Succ(Nat::Succ(Nat::Zero())),
         Nat::Succ(Nat::Succ(Nat::Succ(Nat::Succ(Nat::Zero()))))
     )

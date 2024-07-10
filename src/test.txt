@@ -16,18 +16,18 @@ func super(testmodule::innermodule::innerfile::InnerType) -> testmodule::innermo
 type A = foo(B)
 type B = foo(A)
 
-func main() -> testmodule::innermodule::innerfile::InnerType = x ->
+func main() -> testmodule::innermodule::innerfile::InnerType = ->
     abo(testmodule::innermodule::innerfile::InnerType::InnerType())
 
-func main2() -> Nat = x ->
+func main2() -> Nat = ->
     test2::add(
         test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Zero())),
         test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Zero()))))
     )
 
-func a() -> testmodule::innermodule::innerfile2::InnerFileType2 = x -> testmodule::innermodule::innerfile::gjgj()
+func a() -> testmodule::innermodule::innerfile2::InnerFileType2 = -> testmodule::innermodule::innerfile::gjgj()
 
-func test() -> Nat = x ->
+func test() -> Nat = ->
     let test2::Nat::Zero()
         = test2::Nat::Succ(test2::Nat::Succ(m)) -> m
         | zero                                  -> zero

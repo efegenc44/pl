@@ -8,7 +8,7 @@ func mul(Nat, Nat) -> Nat
     = n, nat::Nat::Zero()  -> nat::Nat::Zero()
     | n, nat::Nat::Succ(m) -> add(n, mul(n, m))
 
-func main() -> nat::Nat = x ->
+func main() -> nat::Nat = ->
     mul(
         nat::Nat::Succ(nat::Nat::Succ(nat::Nat::Zero())),
         nat::Nat::Succ(nat::Nat::Succ(nat::Nat::Succ(nat::Nat::Succ(nat::Nat::Zero()))))
