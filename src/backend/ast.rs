@@ -21,8 +21,7 @@ pub struct Let {
 #[derive(Clone, Debug)]
 pub struct Access {
     pub path: Vec<Spanned<Symbol>>,
-    pub real_path: Vec<Symbol>,
-    pub namespace: Namespace,
+    pub abs_bound: AbsoluteBound,
 }
 
 #[derive(Clone, Debug)]
@@ -47,22 +46,15 @@ impl Expression {
             Self::Nothing(span) => *span,
             Self::Application(Application { expr, args: _ }) => expr.span(),
             Self::Let(Let { type_expr: _, expr: _, branches }) => branches.last().unwrap().1.span(),
-            Self::Access(Access { path, real_path: _, namespace: _ }) => path.first().unwrap().span.extend(path.last().unwrap().span),
+            Self::Access(Access { path, abs_bound: _, }) => path.first().unwrap().span.extend(path.last().unwrap().span),
         }
     }
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum Namespace {
-    Type,
-    Module,
-    Undetermined
 }
 
 #[derive(Clone, Debug)]
 pub enum Bound {
     Local(usize),
-    Absolute(Vec<Symbol>),
+    Absolute(AbsoluteBound),
     None,
 }
 
@@ -70,16 +62,32 @@ impl Display for Bound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Local(id) => write!(f, "Local {id}"),
-            Self::Absolute(path) => {
-                let [rest@.., last] = &path[..] else {
-                    unreachable!()
-                };
-                for part in rest {
-                    write!(f, "{part}::")?;
-                }
-                write!(f, "{last}")
-            },
+            Self::Absolute(abs_bound) => write!(f, "{abs_bound}"),
             Self::None => write!(f, "None"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum AbsoluteBound {
+    FromModule {
+        module: Symbol,
+        name: Symbol
+    },
+    Constructor {
+        module: Symbol,
+        typ: Symbol,
+        name: Symbol
+    },
+    Undetermined,
+}
+
+impl Display for AbsoluteBound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FromModule { module, name } => write!(f, "{module}::{name}"),
+            Self::Constructor { module, typ, name } => write!(f, "{module}::{typ}::{name}"),
+            Self::Undetermined => write!(f, "Undetermined"),
         }
     }
 }
@@ -92,7 +100,7 @@ pub enum Pattern {
     Float(Spanned<Symbol>),
     Constructor {
         path: Vec<Spanned<Symbol>>,
-        real_path: Vec<Symbol>,
+        abs_bound: AbsoluteBound,
         params: Vec<Pattern>,
     }
 }
@@ -104,7 +112,7 @@ impl Pattern {
             | Self::String(lexeme)
             | Self::Integer(lexeme)
             | Self::Float(lexeme) => lexeme.span,
-            Self::Constructor { path, params: _, real_path: _ } => {
+            Self::Constructor { path, params: _, abs_bound: _ } => {
                 path.first().unwrap().span.extend(path.last().unwrap().span)
             },
         }
@@ -145,5 +153,5 @@ pub struct TypeFunction {
 pub enum TypeExpression {
     Identifier(Spanned<Symbol>, Bound),
     Function(TypeFunction),
-    Access(Vec<Spanned<Symbol>>, Vec<Symbol>)
+    Access(Vec<Spanned<Symbol>>, AbsoluteBound)
 }

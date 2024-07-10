@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::{read_dir, read_to_string}, iter::Peekable, path::Pa
 
 use crate::{
     backend::ast::{
-        Access, Application, Bound, Declaration, Expression, TypeFunction, ImportKind, Let, Namespace, Pattern, TypeExpression
+        AbsoluteBound, Access, Application, Bound, Declaration, Expression, ImportKind, Let, Pattern, TypeExpression, TypeFunction
     },
     frontend::token::Token,
 };
@@ -161,10 +161,10 @@ impl<'source> Parser<'source> {
                 vec![]
             };
 
-            Ok(Pattern::Constructor { path, params, real_path: vec![] })
+            Ok(Pattern::Constructor { path, params, abs_bound: AbsoluteBound::Undetermined })
         } else if self.next_peek_is(&Token::OpeningParenthesis) {
             let params = self.comma_seperated_until(Self::pattern, Token::ClosingParenthesis)?;
-            Ok(Pattern::Constructor { path: vec![identifier], params, real_path: vec![] })
+            Ok(Pattern::Constructor { path: vec![identifier], params, abs_bound: AbsoluteBound::Undetermined })
         } else {
             Ok(Pattern::Any(Spanned::new(identifier.data, identifier.span)))
         }
@@ -180,8 +180,7 @@ impl<'source> Parser<'source> {
 
             Expression::Access(Access {
                 path,
-                namespace: Namespace::Undetermined,
-                real_path: Vec::new(),
+                abs_bound: AbsoluteBound::Undetermined,
             })
         } else {
             Expression::Identifier(identifier, Bound::None)
@@ -196,7 +195,7 @@ impl<'source> Parser<'source> {
                 path.push(self.expect_identifier()?);
             }
 
-            TypeExpression::Access(path, vec![])
+            TypeExpression::Access(path, AbsoluteBound::Undetermined)
         } else {
             TypeExpression::Identifier(identifier, Bound::None)
         })
@@ -302,6 +301,7 @@ impl<'source> Parser<'source> {
         };
 
         if matches!(kind, ImportKind::File(_)) {
+            // TODO: Do not hardcode the file extension.
             import_path.set_extension("txt");
         }
 
@@ -312,10 +312,11 @@ impl<'source> Parser<'source> {
         if import_path.is_dir() {
             let mut imports = vec![];
             for path in read_dir(import_path).unwrap() {
-                let mut path = path.unwrap().path();
+                let path = path.unwrap().path();
                 let kind = Self::parse_import(path.clone(), parts)?;
-                path.set_extension("");
-                let name =  path.file_name().unwrap().to_str().unwrap().into();
+                let mut name_path = path.clone();
+                name_path.set_extension("");
+                let name =  name_path.file_name().unwrap().to_str().unwrap().into();
                 imports.push((name, (kind, path.to_str().unwrap().into())));
             }
 

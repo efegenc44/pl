@@ -1,7 +1,7 @@
 import nat (Nat)
 import midnat (add, mul)
 
-func main() -> Nat = x ->
+func main() -> Nat = ->
     midnat::add(
         nat::Nat::Zero(),
         nat::Nat::Succ(nat::Nat::Zero())

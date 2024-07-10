@@ -2,25 +2,27 @@ use std::{collections::HashMap, fmt::Display, iter};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::{ast::{Access, Application, Bound, Expression, TypeFunction, Let, Namespace, Pattern, TypeExpression}, module::{self, Function, Import, Module}, typ::{self, Type}};
+use super::{ast::{AbsoluteBound, Application, Bound, Expression, Let, Pattern, TypeExpression, TypeFunction}, module::{self, Function, Import, Module}, typ::{self, Type}};
 
 pub struct  TypeChecker {
-    interface: Interface,
+    modules: HashMap<Symbol, Types>,
     locals: Vec<Type>,
 }
 
 impl TypeChecker {
     pub fn new(module: &Module) -> Self {
         let mut type_checker = Self {
-            interface: Default::default(),
             locals: Vec::new(),
+            modules: HashMap::new(),
         };
+
+        type_checker.modules.insert(module.path.clone(), Types::default());
 
         // NOTE: Order here is important! (imports => types => constructors => functions)
         type_checker.import_interface(&module.imports);
-        type_checker.type_interface(None, &module.types);
-        type_checker.constructor_interface(None, &module.types);
-        type_checker.function_interface(None, &module.functions);
+        type_checker.type_interface(&module.path, &module.types);
+        type_checker.constructor_interface(&module.path, &module.types);
+        type_checker.function_interface(&module.path, &module.functions);
 
         type_checker
     }
@@ -31,13 +33,7 @@ impl TypeChecker {
         }
 
         for function in module.functions.values() {
-            let module_path = if module.path.is_empty() {
-                None
-            } else {
-                Some(module.path.clone())
-            };
-
-            self.type_check_function(module_path.map(|a| vec![a]), function)?;
+            self.type_check_function(&module.path, function)?;
         }
 
         Ok(())
@@ -52,7 +48,7 @@ impl TypeChecker {
             Expression::Nothing(_) => Ok(Type::Nothing),
             Expression::Application(application) => self.type_check_application(application),
             Expression::Let(lett) => self.type_check_let(lett),
-            Expression::Access(access) => Ok(self.type_check_access(access)),
+            Expression::Access(access) => Ok(self.type_check_access(&access.abs_bound)),
         }
     }
 
@@ -60,7 +56,7 @@ impl TypeChecker {
         match bound {
             Bound::Local(indice) => Ok(self.locals[self.locals.len() - 1 - indice].clone()),
             // TODO: Remove to_vec
-            Bound::Absolute(path) => Ok(self.type_check_access(&Access { path: vec![], namespace: Namespace::Module, real_path: path.to_vec() })),
+            Bound::Absolute(abs_bound) => Ok(self.type_check_access(abs_bound)),
             Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
         }
     }
@@ -109,42 +105,20 @@ impl TypeChecker {
         Ok(result)
     }
 
-    fn type_check_access(&self, Access { path: _, namespace, real_path }: &Access) -> Type {
-        match &real_path[..] {
-            [] => unreachable!(),
-            [name] => {
-                let (params, ret) = self.interface.functions[name].clone();
+    fn type_check_access(&self, abs_bound: &AbsoluteBound) -> Type {
+        match abs_bound {
+            AbsoluteBound::FromModule { module, name } => {
+                let (params, ret) = (&self.modules[module].functions)[name].clone();
+                Type::Function { params, ret: Box::new(ret) }
+            },
+            AbsoluteBound::Constructor { module, typ, name } => {
+                let interface = &self.modules[module];
+                // TODO: If constructor does not take any arguments, does not return a function type
+                let ret = interface.types[typ].clone();
+                let params = interface.constructors[typ][name].clone();
                 Type::Function { params, ret: Box::new(ret) }
             }
-            [a@.., from, name] => {
-                match namespace {
-                    Namespace::Type => {
-                        if a.is_empty() {
-                            // TODO: If constructor does not take any arguments, does not return a function type
-                            let ret = self.interface.types[from].clone();
-                            let params = self.interface.constructors[from][name].clone();
-                            Type::Function { params, ret: Box::new(ret) }
-                        } else {
-                            // let path: Vec<_> = path.iter().map(|part| part.data.clone()).collect();
-                            // dbg!(path);
-                            // dbg!(real_path);
-                            // dbg!(a);
-                            let interface = &self.interface.imports[a];
-                            // TODO: If constructor does not take any arguments, does not return a function type
-                            let ret = interface.types[from].clone();
-                            let params = interface.constructors[from][name].clone();
-                            Type::Function { params, ret: Box::new(ret) }
-                        }
-                    }
-                    Namespace::Module => {
-                        let mut a = a.to_vec();
-                        a.push(from.clone());
-                        let (params, ret) = (&self.interface.imports[&a].functions)[name].clone();
-                        Type::Function { params, ret: Box::new(ret) }
-                    },
-                    Namespace::Undetermined => unreachable!(),
-                }
-            }
+            AbsoluteBound::Undetermined => unreachable!("Name Resolver must've resolved all access expressions."),
         }
     }
 
@@ -157,11 +131,10 @@ impl TypeChecker {
             (Pattern::String(_), Type::String)
             | (Pattern::Integer(_), Type::Integer)
             | (Pattern::Float(_), Type::Float) => Ok(0),
-            (Pattern::Constructor { path: _, params, real_path }, Type::Custom(type_name)) => {
-                let Type::Function { params: cparams, ret: _ } = (match &real_path[..] {
-                    [_] => todo!(),
-                    [path@.., name] => {
-                        let Type::Custom(typ_name) = self.type_check_type_access(path) else {
+            (Pattern::Constructor { path: _, params, abs_bound }, Type::Custom(type_name)) => {
+                let Type::Function { params: cparams, ret: _ } = (match abs_bound {
+                    AbsoluteBound::Constructor { module, typ: typ_name, name: _ } => {
+                        let Type::Custom(typ_name) = self.type_check_type_access(module, typ_name) else {
                             unreachable!();
                         };
 
@@ -169,15 +142,10 @@ impl TypeChecker {
                             return Err(TypeCheckError::PatternMismatch(typ.clone()).attach(pattern.span()))
                         }
 
-                        let mut path = path.to_vec();
-                        path.push(name.clone());
-                        self.type_check_access(&(Access {
-                            path: vec![],
-                            namespace: Namespace::Type,
-                            real_path: real_path.clone(),
-                        }))
+                        self.type_check_access(abs_bound)
                     },
-                    _ => unreachable!(),
+                    AbsoluteBound::FromModule { .. } => unreachable!(),
+                    AbsoluteBound::Undetermined => unreachable!(),
                 }) else {
                     unreachable!()
                 };
@@ -211,7 +179,13 @@ impl TypeChecker {
             TypeExpression::Identifier(_, bound) => {
                 match bound {
                     Bound::Local(_indice) => todo!("Local Type Variables"),
-                    Bound::Absolute(path) => self.type_check_type_access(path),
+                    Bound::Absolute(abs_bound) => {
+                        let AbsoluteBound::FromModule { module, name } = abs_bound else {
+                            unreachable!()
+                        };
+
+                        self.type_check_type_access(module, name)
+                    },
                     Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
                 }
             },
@@ -221,35 +195,22 @@ impl TypeChecker {
 
                 Type::Function { params, ret }
             },
-            TypeExpression::Access(_, real_path) => {
-                let real_path: Vec<_> = real_path.iter().map(|part| part.clone()).collect();
-                self.type_check_type_access(&real_path)
+            TypeExpression::Access(_, abs_bound) => {
+                let AbsoluteBound::FromModule { module, name } = abs_bound else {
+                    unreachable!()
+                };
+
+                self.type_check_type_access(module, name)
             },
         }
     }
 
-    fn type_check_type_access(&self, path: &[Symbol]) -> Type {
-        match &path[..] {
-            [] => unreachable!(),
-            [from] => {
-                self.interface.types[from].clone()
-            }
-            [from@.., name] => {
-                // dbg!(self.interface.imports.keys());
-                // dbg!(from);
-                // dbg!(name);
-                (&self.interface.imports[from].types)[name].clone()
-            }
-        }
+    fn type_check_type_access(&self, module: &Symbol, typ: &Symbol) -> Type {
+        self.modules[module].types[typ].clone()
     }
 
-    fn type_check_function(&mut self, module_path: Option<Vec<Symbol>>, Function { name, params:_ , ret: _, branches }: &Function) -> TypeCheckResult<()> {
-        let (params, ret) = if let Some(module_path) = module_path.clone() {
-            let a = &self.interface.imports[&module_path];
-            a.functions[&name.data].clone()
-        } else {
-            self.interface.functions[&name.data].clone()
-        };
+    fn type_check_function(&mut self, module_path: &Symbol, Function { name, params:_ , ret: _, branches }: &Function) -> TypeCheckResult<()> {
+        let (params, ret) = self.modules[module_path].functions[&name.data].clone();
 
         for (patterns, body) in branches {
             if patterns.len() != params.len() {
@@ -270,13 +231,13 @@ impl TypeChecker {
 
     fn type_check_import(&mut self, Import { parts, kind, directs: _ }: &Import) -> TypeCheckResult<()> {
         match kind {
-            module::ImportKind::File((module, path)) => {
+            module::ImportKind::File(module) => {
                 self.type_check_module(module).map_err(|error| {
                     let first = parts.first().unwrap().span;
                     let last = parts.last().unwrap().span;
                     let span = first.extend(last);
                     TypeCheckError::ImportError {
-                        import_path: path.clone().into(),
+                        import_path: module.path.clone().into(),
                         error: Box::new(error),
                     }
                     .attach(span)
@@ -292,17 +253,13 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn type_interface(&mut self, module_path: Option<Vec<Symbol>>, types: &HashMap<Symbol, module::Type>) {
+    fn type_interface(&mut self, module_path: &Symbol, types: &HashMap<Symbol, module::Type>) {
         for module::Type { name, consts: _ } in types.values() {
-            if let Some(module_path) = module_path.clone() {
-                self.interface.imports.get_mut(&module_path).unwrap().types.insert(name.data.clone(), Type::Custom(name.data.clone()));
-            } else{
-                self.interface.types.insert(name.data.clone(), Type::Custom(name.data.clone()));
-            }
+            self.modules.get_mut(module_path).unwrap().types.insert(name.data.clone(), Type::Custom(name.data.clone()));
         }
     }
 
-    fn constructor_interface(&mut self, module_path: Option<Vec<Symbol>>, types: &HashMap<Symbol, module::Type>) {
+    fn constructor_interface(&mut self, module_path: &Symbol, types: &HashMap<Symbol, module::Type>) {
         for module::Type { name, consts } in types.values() {
             let mut map = HashMap::new();
             for (name, params) in consts {
@@ -313,15 +270,11 @@ impl TypeChecker {
                 map.insert(name.data.clone(), params);
             }
 
-            if let Some(module_path) = module_path.clone() {
-                self.interface.imports.get_mut(&module_path).unwrap().constructors.insert(name.data.clone(), map);
-            } else{
-                self.interface.constructors.insert(name.data.clone(), map);
-            }
+            self.modules.get_mut(module_path).unwrap().constructors.insert(name.data.clone(), map);
         }
     }
 
-    fn function_interface(&mut self, module_path: Option<Vec<Symbol>>, functions: &HashMap<Symbol, Function>) {
+    fn function_interface(&mut self, module_path: &Symbol, functions: &HashMap<Symbol, Function>) {
         for Function { name, params, ret, branches: _ } in functions.values() {
             let function_type = (
                 params
@@ -331,24 +284,25 @@ impl TypeChecker {
                 ret.as_ref().map_or(Type::Nothing, |ret| self.eval_type_expr(ret))
             );
 
-            if let Some(module_path) = module_path.clone() {
-                self.interface.imports.get_mut(&module_path).unwrap().functions.insert(name.data.clone(), function_type);
-            } else{
-                self.interface.functions.insert(name.data.clone(), function_type);
-            }
+            self.modules.get_mut(module_path).unwrap().functions.insert(name.data.clone(), function_type);
         }
     }
 
     fn get_import_types(&mut self, Import { parts: _, kind, directs: _ }: &Import) {
         match kind {
-            module::ImportKind::File((module, path)) => {
-                // NOTE: Order here is important! (imports => types => constructors => functions)
-                self.interface.imports.insert(vec![path.clone()], ImportTypes::default());
+            module::ImportKind::File(module) => {
+                if self.modules.contains_key(&module.path) {
+                    // already encountered the module.
+                    return;
+                }
 
+                self.modules.insert(module.path.clone(), Types::default());
+
+                // NOTE: Order here is important! (imports => types => constructors => functions)
                 self.import_interface(&module.imports);
-                self.type_interface(Some(vec![path.clone()]), &module.types);
-                self.constructor_interface(Some(vec![path.clone()]), &module.types);
-                self.function_interface(Some(vec![path.clone()]), &module.functions);
+                self.type_interface(&module.path, &module.types);
+                self.constructor_interface(&module.path, &module.types);
+                self.function_interface(&module.path, &module.functions);
             },
             module::ImportKind::Folder((imports, _path)) => {
                 self.import_interface(imports);
@@ -396,16 +350,8 @@ impl HasSpan for TypeCheckError {}
 
 type TypeCheckResult<T> = Result<T, Spanned<TypeCheckError>>;
 
-#[derive(Default)]
-pub struct Interface {
-    functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
-    imports: HashMap<Vec<Symbol>, ImportTypes>,
-    types: HashMap<Symbol, typ::Type>,
-    constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
-}
-
 #[derive(Default, Debug)]
-pub struct ImportTypes {
+pub struct Types {
     functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
     types: HashMap<Symbol, typ::Type>,
     constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,

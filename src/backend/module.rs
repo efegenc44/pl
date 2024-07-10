@@ -13,7 +13,7 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn new(declarations: Vec<Declaration>, path: Option<Symbol>) -> ModuleResult<Self> {
+    pub fn new(declarations: Vec<Declaration>, path: Symbol) -> ModuleResult<Self> {
         let mut functions = HashMap::new();
         let mut imports = HashMap::new();
         let mut types = HashMap::new();
@@ -41,13 +41,13 @@ impl Module {
             }
         }
 
-        Ok(Self { functions, imports, types, path: path.unwrap_or(Box::default()) })
+        Ok(Self { functions, imports, types, path })
     }
 
     fn import_kind(kind: ast::ImportKind, parts: &[Spanned<Symbol>], path: Symbol) -> ModuleResult<ImportKind> {
         match kind {
             ast::ImportKind::File(import) => {
-                let module = Module::new(import, Some(path.clone()))
+                let module = Module::new(import, path.clone())
                     .map_err(|error| {
                         let first = parts.first().unwrap().span;
                         let last = parts.last().unwrap().span;
@@ -59,7 +59,7 @@ impl Module {
                         .attach(span)
                     })?;
 
-                Ok(ImportKind::File((module, path)))
+                Ok(ImportKind::File(module))
             },
             ast::ImportKind::Folder(imports) => {
                 let mut map = HashMap::new();
@@ -114,6 +114,6 @@ pub struct Type {
 }
 
 pub enum ImportKind {
-    File((Module, Symbol)),
+    File(Module),
     Folder((HashMap<Symbol, Import>, Symbol))
 }

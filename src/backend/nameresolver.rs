@@ -8,7 +8,7 @@ use crate::frontend::{
 };
 
 use super::{
-    ast::{Access, Application, Bound, Expression, TypeFunction, Let, Namespace, Pattern, TypeExpression},
+    ast::{AbsoluteBound, Access, Application, Bound, Expression, Let, Pattern, TypeExpression, TypeFunction},
     module::{self, Function, Import, Module}
 };
 
@@ -19,25 +19,25 @@ pub struct NameResolver {
 }
 
 impl NameResolver {
-    pub fn new(module: &Module, module_path: Symbol) -> Self {
+    pub fn new(module: &Module) -> Self {
         let mut resolver = Self {
             names: Names::default(),
             locals: Vec::new(),
-            module_path,
+            module_path: module.path.clone(),
         };
 
         resolver.collect_names(module);
         resolver
     }
 
-    pub fn resolve_module(module: Module, module_path: Symbol) -> ResolutionResult<Module> {
-        let mut resolver = Self::new(&module, module_path.clone());
+    pub fn resolve_module(module: Module) -> ResolutionResult<Module> {
+        let mut resolver = Self::new(&module);
 
         Ok(Module {
             functions: resolver.resolve_functions(module.functions)?,
             imports: resolver.resolve_imports(module.imports)?,
             types: resolver.resolve_types(module.types)?,
-            path: module_path,
+            path: module.path,
         })
     }
 
@@ -62,9 +62,9 @@ impl NameResolver {
         self.names = Names { functions, imports, types, type_directs, func_directs }
     }
 
-    fn collect_import_names(&mut self, import: &Import) -> ((ImportNames, Vec<Symbol>), HashMap<Symbol, Vec<Symbol>>, HashMap<Symbol, Vec<Symbol>>) {
+    fn collect_import_names(&mut self, import: &Import) -> ((ImportNames, Symbol), HashMap<Symbol, Symbol>, HashMap<Symbol, Symbol>) {
         match &import.kind {
-            module::ImportKind::File((module, path)) => {
+            module::ImportKind::File(module) => {
                 let types: HashMap<_, _> = module.types.iter().map(|(type_name, typ)| {
                     (type_name.clone(), typ.consts.iter().map(|(name, _)| name.data.clone()).collect())
                 }).collect();
@@ -74,20 +74,18 @@ impl NameResolver {
                 let mut type_directs = HashMap::new();
                 let mut func_directs = HashMap::new();
                 for direct in &import.directs {
-                    let mut path = vec![path.clone()];
-                    path.push(direct.data.clone());
 
                     // NOTE: While importing Type has priority.
                     if types.contains_key(&direct.data) {
-                        type_directs.insert(direct.data.clone(), path);
+                        type_directs.insert(direct.data.clone(), module.path.clone());
                     } else if functions.contains(&direct.data) {
-                        func_directs.insert(direct.data.clone(), path);
+                        func_directs.insert(direct.data.clone(), module.path.clone());
                     } else {
                         todo!("Unbound name in module")
                     };
                 }
 
-                ((ImportNames::Module { functions, types }, vec![path.clone()]), type_directs, func_directs)
+                ((ImportNames::Module { functions, types }, module.path.clone()), type_directs, func_directs)
             },
             module::ImportKind::Folder((imports, path)) => {
                 let mut modules = HashMap::new();
@@ -97,7 +95,7 @@ impl NameResolver {
                 }
 
                 // TODO: Direct importing namespaces
-                ((ImportNames::Group(modules), vec![path.clone()]), HashMap::new(), HashMap::new())
+                ((ImportNames::Group(modules), path.clone()), HashMap::new(), HashMap::new())
             },
         }
 
@@ -108,7 +106,7 @@ impl NameResolver {
             Expression::Identifier(identifier, _) => self.resolve_identifier(identifier),
             Expression::Application(application) => self.resolve_application(application),
             Expression::Let(lett) => self.resolve_let(lett),
-            Expression::Access(access) => self.resolve_access(access),
+            Expression::Access(access) => self.resolve_access(access.path),
             literal => Ok(literal),
         }
     }
@@ -118,8 +116,8 @@ impl NameResolver {
             Bound::Local(indice)
         } else if self.names.functions.contains(&identifier.data) {
             Bound::Absolute(self.make_path(identifier.data.clone()))
-        } else if let Some(path) = self.names.func_directs.get(&identifier.data) {
-            Bound::Absolute(path.clone())
+        } else if let Some(module) = self.names.func_directs.get(&identifier.data) {
+            Bound::Absolute(AbsoluteBound::FromModule { module: module.clone(), name: identifier.data.clone() })
         } else {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
@@ -127,12 +125,8 @@ impl NameResolver {
         Ok(Expression::Identifier(identifier, bound))
     }
 
-    fn make_path(&self, name: Symbol) -> Vec<Symbol> {
-        if self.module_path.is_empty() {
-            vec![name]
-        } else {
-            vec![self.module_path.clone(), name]
-        }
+    fn make_path(&self, name: Symbol) -> AbsoluteBound {
+        AbsoluteBound::FromModule { module: self.module_path.clone(), name }
     }
 
     fn resolve_application(&mut self, Application { expr, args }: Application) -> ResolutionResult<Expression> {
@@ -162,25 +156,34 @@ impl NameResolver {
     }
 
     // TODO: Better error reporting here.
-    fn resolve_access(&mut self, Access { path, .. }: Access) -> ResolutionResult<Expression> {
-        let (namespace, mut import_path) = match &path[..] {
+    fn resolve_access(&mut self, path: Vec<Spanned<Symbol>>) -> ResolutionResult<Expression> {
+        let abs_bound = match &path[..] {
             [_] | [] => unreachable!(),
             [from, name] => {
                 if let Some((import, import_path)) = self.names.imports.get(&from.data) {
+                    let bound = AbsoluteBound::FromModule {
+                        module: import_path.clone(),
+                        name: name.data.clone()
+                    };
+
                     import
                         .as_module()
                         .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                         .0
                         .contains(&name.data)
-                        .then_some((Namespace::Module, import_path.clone()))
+                        .then_some(bound)
                         .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
 
                 } else if let Some(typ) = self.names.types.get(&from.data) {
-                    let path = self.make_path(from.data.clone());
+                    let bound = AbsoluteBound::Constructor {
+                        module: self.module_path.clone(),
+                        typ: from.data.clone(),
+                        name: name.data.clone()
+                    };
 
                     typ
                         .contains(&name.data)
-                        .then_some((Namespace::Type, path))
+                        .then_some(bound)
                         .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                 } else {
                     return Err(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))
@@ -199,20 +202,22 @@ impl NameResolver {
                         .as_group()
                         .ok_or(ResolutionError::NonExistantNamespace(module.data.clone()).attach(module.span))?
                         .get(&module.data)
-                        .ok_or(ResolutionError::NonExistantNamespace(module.data.clone()).attach(module.span))?
+                        .ok_or(ResolutionError::NonExistantNamespace(module.data.clone()).attach(module.span))?;
                 }
 
                 match &current_import.0 {
                     // If the current is a 'Module', before should be a 'Type' and we should access to a constructor.
                     ImportNames::Module { types, .. } => {
-                        // HACK: trust me, we need to push here. just one more push, surely it will be fixed.
-                        let mut path = current_import.1.clone();
-                        path.push(from.data.clone());
+                        let bound = AbsoluteBound::Constructor {
+                            module: current_import.1.clone(),
+                            typ: from.data.clone(),
+                            name: name.data.clone()
+                        };
 
                         types.get(&from.data)
                             .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                             .contains(&name.data)
-                            .then_some((Namespace::Type, path))
+                            .then_some(bound)
                             .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                     }
                     // If the current is a 'Group', before should be a 'Module' and we should access to a function.
@@ -220,29 +225,24 @@ impl NameResolver {
                         let (module, path) = modules.get(&from.data)
                             .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?;
 
-                        let path = path.clone();
-                        // path.push(from.data.clone());
+                        let bound = AbsoluteBound::FromModule {
+                            module: path.clone(),
+                            name: name.data.clone()
+                        };
 
                         module
                             .as_module()
                             .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                             .0
                             .contains(&name.data)
-                            .then_some((Namespace::Module, path))
+                            .then_some(bound)
                             .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                     }
                 }
             },
         };
 
-        import_path.push(path.last().unwrap().data.clone());
-
-        // let path2 = path.iter().map(|part| part.data.clone()).collect::<Vec<_>>();
-        // dbg!(&path2);
-        // dbg!(&import_path);
-        // assert!(import_path.len() >= path2.len());
-
-        Ok(Expression::Access(Access { path, namespace, real_path: import_path }))
+        Ok(Expression::Access(Access { path, abs_bound }))
     }
 
     fn resolve_type_expr(&mut self, type_expr: TypeExpression) -> ResolutionResult<TypeExpression> {
@@ -257,11 +257,13 @@ impl NameResolver {
         // TODO: Local type variables for polymorphic types.
         let bound = if self.names.types.contains_key(&identifier.data) {
             Bound::Absolute(self.make_path(identifier.data.clone()))
-        } else if let Some(path) = self.names.type_directs.get(&identifier.data) {
-            Bound::Absolute(path.clone())
+        } else if let Some(module) = self.names.type_directs.get(&identifier.data) {
+            Bound::Absolute(AbsoluteBound::FromModule { module: module.clone(), name: identifier.data.clone() })
         } else {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
+
+        // dbg!(&identifier.data, &bound, &self.module_path);
 
         Ok(TypeExpression::Identifier(identifier, bound))
     }
@@ -277,19 +279,24 @@ impl NameResolver {
     }
 
     fn resolve_type_access(&self, path: Vec<Spanned<Symbol>>) -> ResolutionResult<TypeExpression> {
-        let mut real_path = match &path[..] {
+        let bound = match &path[..] {
             [_] | [] => unreachable!(),
             [from, name] => {
                 let (import, real_path) = self.names.imports
                     .get(&from.data)
                     .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?;
 
+                let bound = AbsoluteBound::FromModule {
+                    module: real_path.clone(),
+                    name: name.data.clone()
+                };
+
                 import
                     .as_module()
                     .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                     .1
                     .contains_key(&name.data)
-                    .then_some(real_path.clone())
+                    .then_some(bound)
                     .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
             },
             // In this case modules.len() >= 1 and they have to refer to a module.
@@ -313,18 +320,22 @@ impl NameResolver {
                     .get(&from.data)
                     .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?;
 
+                let bound = AbsoluteBound::FromModule {
+                    module: path.clone(),
+                    name: name.data.clone()
+                };
+
                 module
                     .as_module()
                     .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                     .1
                     .contains_key(&name.data)
-                    .then_some(path.clone())
+                    .then_some(bound)
                     .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
             }
         };
 
-        real_path.push(path.last().unwrap().data.clone());
-        Ok(TypeExpression::Access(path, real_path))
+        Ok(TypeExpression::Access(path, bound))
     }
 
     fn resolve_function(&mut self, Function { name, params, ret, branches }: Function) -> ResolutionResult<Function> {
@@ -378,10 +389,11 @@ impl NameResolver {
 
     fn resolve_import(&mut self, Import { parts, kind, directs }: Import) -> ResolutionResult<Import> {
         match kind {
-            module::ImportKind::File((module, path)) => {
-                // dbg!(&path);
+            module::ImportKind::File(module) => {
 
-                let module = NameResolver::resolve_module(module, path.clone()).map_err(|error| {
+                let path = module.path.clone();
+                // dbg!(&path);
+                let module = NameResolver::resolve_module(module).map_err(|error| {
                     let first = parts.first().unwrap().span;
                     let last = parts.last().unwrap().span;
                     let span = first.extend(last);
@@ -392,7 +404,7 @@ impl NameResolver {
                     .attach(span)
                 })?;
 
-                Ok(Import { parts, kind: module::ImportKind::File((module, path)), directs })
+                Ok(Import { parts, kind: module::ImportKind::File(module), directs })
             },
             module::ImportKind::Folder((imports, path)) => {
                 let mut modules = HashMap::new();
@@ -421,17 +433,16 @@ impl NameResolver {
 
     fn resolve_pattern(&mut self, pattern: Pattern) -> Pattern {
         match pattern {
-            Pattern::Constructor { path, params, real_path: _ } => {
+            Pattern::Constructor { path, params, abs_bound: _ } => {
                 // TODO: Remove unwrap.
-                let Expression::Access(Access { path, namespace, real_path }) =
-                    self.resolve_access(Access { path: path.to_vec(), namespace: Namespace::Type, real_path: vec![] }).unwrap() else {
+                let Expression::Access(Access { path, abs_bound }) = self.resolve_access(path).unwrap() else {
                     unreachable!()
                 };
 
-                assert!(namespace == Namespace::Type);
+                assert!(matches!(abs_bound, AbsoluteBound::Constructor { .. }));
 
                 let params = params.into_iter().map(|param| self.resolve_pattern(param)).collect();
-                Pattern::Constructor { path, real_path, params }
+                Pattern::Constructor { path, abs_bound, params }
             },
             literal => literal
         }
@@ -443,7 +454,7 @@ impl NameResolver {
                 self.locals.push(identifier.data.clone());
                 1
             }
-            Pattern::Constructor { path: _, params, real_path: _ } => {
+            Pattern::Constructor { path: _, params, abs_bound: _ } => {
                 let mut local_count = 0;
                 for param in params {
                     local_count += self.push_names_in_pattern(param);
@@ -459,10 +470,10 @@ impl NameResolver {
 #[derive(Default)]
 struct Names {
     functions: HashSet<Symbol>,
-    imports: HashMap<Symbol, (ImportNames, Vec<Symbol>)>,
+    imports: HashMap<Symbol, (ImportNames, Symbol)>,
     types: HashMap<Symbol, HashSet<Symbol>>,
-    type_directs: HashMap<Symbol, Vec<Symbol>>,
-    func_directs: HashMap<Symbol, Vec<Symbol>>,
+    type_directs: HashMap<Symbol, Symbol>,
+    func_directs: HashMap<Symbol, Symbol>,
 }
 
 enum ImportNames {
@@ -470,11 +481,11 @@ enum ImportNames {
         functions: HashSet<Symbol>,
         types: HashMap<Symbol, HashSet<Symbol>>,
     },
-    Group(HashMap<Symbol, (ImportNames, Vec<Symbol>)>)
+    Group(HashMap<Symbol, (ImportNames, Symbol)>)
 }
 
 impl ImportNames {
-    fn as_group(&self) -> Option<&HashMap<Symbol, (ImportNames, Vec<Symbol>)>> {
+    fn as_group(&self) -> Option<&HashMap<Symbol, (ImportNames, Symbol)>> {
         if let Self::Group(v) = self {
             Some(v)
         } else {

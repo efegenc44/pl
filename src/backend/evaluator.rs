@@ -2,19 +2,24 @@ use std::{collections::HashMap, iter};
 
 use crate::frontend::token::Symbol;
 
-use super::{ast::{Access, Application, Bound, Expression, Let, Namespace, Pattern}, module::{self, Function, Import, Module}, value::{FunctionValue, Value}};
+use super::{ast::{AbsoluteBound, Application, Bound, Expression, Let, Pattern}, module::{self, Function, Import, Module}, value::{FunctionValue, Value}};
 
 pub struct Evaluator {
-    values: Values,
+    modules: HashMap<Symbol, Values>,
     locals: Vec<Value>
 }
 
 impl Evaluator {
     pub fn new(module: &Module) -> Self {
-        let mut evaluator = Self { locals: Vec::new(), values: Values::default() };
+        let mut evaluator = Self {
+            locals: Vec::new(),
+            modules: HashMap::new()
+        };
 
-        evaluator.collect_functions(None, &module.functions);
-        evaluator.collect_constructors(None, &module.types);
+        evaluator.modules.insert(module.path.clone(), Values::default());
+
+        evaluator.collect_functions(&module.path.clone(), &module.functions);
+        evaluator.collect_constructors(&module.path.clone(), &module.types);
         evaluator.collect_imports(&module.imports);
         evaluator
     }
@@ -23,7 +28,7 @@ impl Evaluator {
         let mut evaluator = Self::new(module);
 
         // TODO: Checks on main should happen before probably at typechecking.
-        let FunctionValue { branches } = evaluator.values.functions["main".into()].clone();
+        let FunctionValue { branches } = evaluator.modules[&module.path].functions["main".into()].clone();
         let [branch] = &branches[..] else {
             todo!("Main function should only have 1 branch")
         };
@@ -42,7 +47,7 @@ impl Evaluator {
             Expression::Nothing(_) => Value::Nothing,
             Expression::Application(application) => self.eval_application(application),
             Expression::Let(lett) => self.eval_let(lett),
-            Expression::Access(access) => self.eval_access(access),
+            Expression::Access(access) => self.eval_access(&access.abs_bound),
         }
     }
 
@@ -50,7 +55,7 @@ impl Evaluator {
         match bound {
             Bound::Local(indice) => self.locals[self.locals.len() - 1 - indice].clone(),
             // TODO: Remove to_vec
-            Bound::Absolute(path) => self.eval_access(&Access { path: vec![], namespace: Namespace::Module, real_path: path.clone() }),
+            Bound::Absolute(abs_bound) => self.eval_access(abs_bound),
             Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
         }
     }
@@ -105,34 +110,19 @@ impl Evaluator {
         }
     }
 
-    fn eval_access(&self, Access { path: _, namespace, real_path }: &Access) -> Value {
-        match &real_path[..] {
-            [] => unreachable!(),
-            [name] => Value::Function(self.values.functions[name].clone()),
-            [a@.., from, name] => {
-                match namespace {
-                    Namespace::Type => {
-                        if a.is_empty() {
-                            // TODO: If constructor does not take any arguments, does not return a function type
-                            let arity = self.values.constructors[from][name].clone();
-                            Value::Constructor(name.clone(), arity)
-                        } else {
-                            let interface = &self.values.imports[a];
-                            // TODO: If constructor does not take any arguments, does not return a function type
-                            let arity = interface.constructors[from][name].clone();
-                            Value::Constructor(name.clone(), arity)
-                        }
-
-                    }
-                    Namespace::Module => {
-                        let mut a = a.to_vec();
-                        a.push(from.clone());
-                        let function = (&self.values.imports[&a].functions)[name].clone();
-                        Value::Function(function)
-                    },
-                    Namespace::Undetermined => unreachable!(),
-                }
+    fn eval_access(&self, abs_bound: &AbsoluteBound) -> Value {
+        match abs_bound {
+            AbsoluteBound::FromModule { module, name } => {
+                let function = self.modules[module].functions[name].clone();
+                Value::Function(function)
             }
+            AbsoluteBound::Constructor { module, typ, name } => {
+                let interface = &self.modules[module];
+                // TODO: If constructor does not take any arguments, does not return a function type
+                let arity = interface.constructors[typ][name].clone();
+                Value::Constructor(name.clone(), arity)
+            },
+            AbsoluteBound::Undetermined => unreachable!(),
         }
     }
 
@@ -142,7 +132,7 @@ impl Evaluator {
             (Pattern::String(str1), Value::String(str2)) => &str1.data == &str2.clone().into_boxed_str(),
             (Pattern::Integer(int1), Value::Integer(int2)) => &int1.data.to_string().parse::<isize>().unwrap() == int2,
             (Pattern::Float(float1), Value::Float(float2)) => &float1.data.to_string().parse::<f32>().unwrap() == float2,
-            (Pattern::Constructor { path, params, real_path: _ }, Value::Custom { constructor, values }) => {
+            (Pattern::Constructor { path, params, abs_bound: _ }, Value::Custom { constructor, values }) => {
                 if &path.last().unwrap().data != constructor {
                     return false;
                 }
@@ -168,7 +158,7 @@ impl Evaluator {
             (Pattern::String(_), Value::String(_)) |
             (Pattern::Integer(_), Value::Integer(_)) |
             (Pattern::Float(_), Value::Float(_)) => 0,
-            (Pattern::Constructor { path: _, params, real_path: _ }, Value::Custom { constructor: _, values }) => {
+            (Pattern::Constructor { path: _, params, abs_bound: _ }, Value::Custom { constructor: _, values }) => {
                 let mut local_count = 0;
                 for (param, value) in iter::zip(params, values) {
                     local_count += self.push_values_in_pattern(param, value);
@@ -180,17 +170,13 @@ impl Evaluator {
         }
     }
 
-    fn collect_functions(&mut self, module_path: Option<Vec<Symbol>>, functions: &HashMap<Symbol, Function>) {
+    fn collect_functions(&mut self, module_path: &Symbol, functions: &HashMap<Symbol, Function>) {
         for Function { name, branches, .. } in functions.values() {
-            if let Some(module_path) = module_path.clone() {
-                self.values.imports.get_mut(&module_path).unwrap().functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
-            } else{
-                self.values.functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
-            }
+            self.modules.get_mut(module_path).unwrap().functions.insert(name.data.clone(), FunctionValue { branches: branches.to_vec() });
         }
     }
 
-    fn collect_constructors(&mut self, module_path: Option<Vec<Symbol>>, types: &HashMap<Symbol, module::Type>) {
+    fn collect_constructors(&mut self, module_path: &Symbol, types: &HashMap<Symbol, module::Type>) {
         for module::Type { name, consts } in types.values() {
             let mut map = HashMap::new();
             for (name, params) in consts {
@@ -198,21 +184,22 @@ impl Evaluator {
                 map.insert(name.data.clone(), params);
             }
 
-            if let Some(module_path) = module_path.clone() {
-                self.values.imports.get_mut(&module_path).unwrap().constructors.insert(name.data.clone(), map);
-            } else{
-                self.values.constructors.insert(name.data.clone(), map);
-            }
+            self.modules.get_mut(module_path).unwrap().constructors.insert(name.data.clone(), map);
         }
     }
 
     fn get_import_values(&mut self, Import { parts: _, kind, directs: _ }: &Import) {
         match kind {
-            module::ImportKind::File((module, path)) => {
-                self.values.imports.insert(vec![path.clone()], ImportValues::default());
+            module::ImportKind::File(module) => {
+                if self.modules.contains_key(&module.path) {
+                    // already encountered the module.
+                    return;
+                }
 
-                self.collect_functions(Some(vec![path.clone()]), &module.functions);
-                self.collect_constructors(Some(vec![path.clone()]), &module.types);
+                self.modules.insert(module.path.clone(), Values::default());
+
+                self.collect_functions(&module.path, &module.functions);
+                self.collect_constructors(&module.path, &module.types);
                 self.collect_imports(&module.imports);
             },
             module::ImportKind::Folder((imports, _path)) => {
@@ -228,15 +215,8 @@ impl Evaluator {
     }
 }
 
-#[derive(Default)]
-pub struct Values {
-    functions: HashMap<Symbol, FunctionValue>,
-    imports: HashMap<Vec<Symbol>, ImportValues>,
-    constructors: HashMap<Symbol, HashMap<Symbol, usize>>,
-}
-
 #[derive(Debug, Default)]
-struct ImportValues {
+struct Values {
     functions: HashMap<Symbol, FunctionValue>,
     constructors: HashMap<Symbol, HashMap<Symbol, usize>>,
 }
