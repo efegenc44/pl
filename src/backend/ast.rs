@@ -5,34 +5,6 @@ use crate::frontend::{
     token::Symbol,
 };
 
-#[derive(Clone, Copy, Debug)]
-pub enum Operator {
-    Add,
-    Sub,
-    Mul,
-    Less,
-    Pow,
-}
-
-impl Display for Operator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Add => write!(f, "+"),
-            Self::Sub => write!(f, "-"),
-            Self::Mul => write!(f, "*"),
-            Self::Less => write!(f, "<"),
-            Self::Pow => write!(f, "^"),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Binary {
-    pub lhs: Box<Expression>,
-    pub op: Operator,
-    pub rhs: Box<Expression>,
-}
-
 #[derive(Clone, Debug)]
 pub struct Application {
     pub expr: Box<Expression>,
@@ -44,12 +16,6 @@ pub struct Let {
     pub expr: Box<Expression>,
     pub type_expr: Option<TypeExpression>,
     pub branches: Vec<(Pattern, Box<Expression>)>
-}
-
-#[derive(Clone, Debug)]
-pub struct Lambda {
-    pub params: Vec<Pattern>,
-    pub body: Box<Expression>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,10 +32,8 @@ pub enum Expression {
     Float(Spanned<Symbol>),
     String(Spanned<Symbol>),
     Nothing(Span),
-    Binary(Binary),
     Application(Application),
     Let(Let),
-    Lambda(Lambda),
     Access(Access),
 }
 
@@ -81,10 +45,8 @@ impl Expression {
             | Self::Float(lexeme)
             | Self::String(lexeme) => lexeme.span,
             Self::Nothing(span) => *span,
-            Self::Binary(Binary { lhs, op: _, rhs }) => lhs.span().extend(rhs.span()),
             Self::Application(Application { expr, args: _ }) => expr.span(),
             Self::Let(Let { type_expr: _, expr: _, branches }) => branches.last().unwrap().1.span(),
-            Self::Lambda(Lambda { params: _, body }) => body.span(),
             Self::Access(Access { path, real_path: _, namespace: _ }) => path.first().unwrap().span.extend(path.last().unwrap().span),
         }
     }

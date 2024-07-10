@@ -40,10 +40,8 @@ impl Evaluator {
             Expression::Float(float) => Value::Float(float.data.to_string().parse().unwrap()),
             Expression::String(string) => Value::String(string.data.to_string()),
             Expression::Nothing(_) => Value::Nothing,
-            Expression::Binary(_) => todo!("Evaluation of binary expressions"),
             Expression::Application(application) => self.eval_application(application),
             Expression::Let(lett) => self.eval_let(lett),
-            Expression::Lambda(_) => todo!("Evaluation of lambdas"),
             Expression::Access(access) => self.eval_access(access),
         }
     }

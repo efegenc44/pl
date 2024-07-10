@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::{read_dir, read_to_string}, iter::Peekable, path::Pa
 
 use crate::{
     backend::ast::{
-        Access, Application, Binary, Bound, Declaration, Expression, TypeFunction, ImportKind, Lambda, Let, Namespace, Operator, Pattern, TypeExpression
+        Access, Application, Bound, Declaration, Expression, TypeFunction, ImportKind, Let, Namespace, Pattern, TypeExpression
     },
     frontend::token::Token,
 };
@@ -12,21 +12,6 @@ use super::{
     token::Symbol,
     tokens::Tokens,
 };
-
-#[derive(PartialEq)]
-enum Associativity {
-    Right,
-    Left,
-    None,
-}
-
-const OPERATORS: [(Token, Associativity, usize); 5] = [
-    (Token::Less, Associativity::None, 0),
-    (Token::Plus, Associativity::Left, 1),
-    (Token::Minus, Associativity::Left, 1),
-    (Token::Star, Associativity::Left, 2),
-    (Token::Carrot, Associativity::Right, 3),
-];
 
 pub struct Parser<'source> {
     file_path: PathBuf,
@@ -147,14 +132,6 @@ impl<'source> Parser<'source> {
         Ok((pattern, expr))
     }
 
-    fn lambda(&mut self) -> ParseResult<Expression> {
-        self.expect(Token::Backslash)?;
-        let params = self.comma_seperated_until(Self::pattern, Token::RightArrow)?;
-        let body = Box::new(self.expression()?);
-
-        Ok(Expression::Lambda(Lambda { params, body }))
-    }
-
     fn pattern(&mut self) -> ParseResult<Pattern> {
         let Some(peeked) = self.tokens.peek() else {
             return self.unexpected_eof()
@@ -238,7 +215,6 @@ impl<'source> Parser<'source> {
             Token::KeywordNothing => Ok(Expression::Nothing(self.tokens.next().unwrap().span)),
             Token::OpeningParenthesis => self.grouping(Self::expression),
             Token::KeywordLet => self.lett(),
-            Token::Backslash => self.lambda(),
             unexpected => Err(ParseError::UnexpectedToken(unexpected.clone()).attach(peeked.span)),
         }
     }
@@ -256,46 +232,8 @@ impl<'source> Parser<'source> {
         Ok(expr)
     }
 
-    fn binary(&mut self, min_precedence: usize) -> ParseResult<Expression> {
-        let mut lhs = self.application()?;
-
-        while let Some(token) = self.tokens.peek().map(|peeked| &peeked.data) {
-            let Some((op, assoc, op_precedence)) = OPERATORS.iter().find(|(op, _, _)| op == token) else {
-                break;
-            };
-
-            let op = match op {
-                Token::Minus => Operator::Sub,
-                Token::Plus => Operator::Add,
-                Token::Star => Operator::Mul,
-                Token::Carrot => Operator::Pow,
-                Token::Less => Operator::Less,
-                _ => unreachable!(),
-            };
-
-            if op_precedence < &min_precedence {
-                break;
-            }
-            self.tokens.next();
-
-            let rhs = self.binary(op_precedence + usize::from(assoc != &Associativity::Right))?;
-
-            lhs = Expression::Binary(Binary {
-                lhs: Box::new(lhs),
-                op,
-                rhs: Box::new(rhs),
-            });
-
-            if assoc == &Associativity::None {
-                break;
-            }
-        }
-
-        Ok(lhs)
-    }
-
     pub fn expression(&mut self) -> ParseResult<Expression> {
-        self.binary(0)
+        self.application()
     }
 
     fn func_type(&mut self) -> ParseResult<TypeExpression> {

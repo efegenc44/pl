@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, iter};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::{ast::{Access, Application, Binary, Bound, Expression, TypeFunction, Lambda, Let, Namespace, Pattern, TypeExpression}, module::{self, Function, Import, Module}, typ::{self, Type}};
+use super::{ast::{Access, Application, Bound, Expression, TypeFunction, Let, Namespace, Pattern, TypeExpression}, module::{self, Function, Import, Module}, typ::{self, Type}};
 
 pub struct  TypeChecker {
     interface: Interface,
@@ -50,16 +50,8 @@ impl TypeChecker {
             Expression::Float(_) => Ok(Type::Float),
             Expression::String(_) => Ok(Type::String),
             Expression::Nothing(_) => Ok(Type::Nothing),
-            Expression::Binary(Binary { lhs, op: _, rhs }) => {
-                self.type_check_expr(lhs)?;
-                self.type_check_expr(rhs)?;
-                todo!("Type Checking of Binary Exprssions");
-            },
             Expression::Application(application) => self.type_check_application(application),
             Expression::Let(lett) => self.type_check_let(lett),
-            Expression::Lambda(Lambda { params: _, body: _ }) => {
-                todo!("Type Checking of Lambdas")
-            },
             Expression::Access(access) => Ok(self.type_check_access(access)),
         }
     }

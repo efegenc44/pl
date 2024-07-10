@@ -2,13 +2,13 @@ use std::{
     collections::{HashMap, HashSet}, fmt::Display
 };
 
-use crate::{backend::ast::Binary, frontend::{
+use crate::frontend::{
     span::{HasSpan, Spanned},
     token::Symbol,
-}};
+};
 
 use super::{
-    ast::{Access, Application, Bound, Expression, TypeFunction, Lambda, Let, Namespace, Pattern, TypeExpression},
+    ast::{Access, Application, Bound, Expression, TypeFunction, Let, Namespace, Pattern, TypeExpression},
     module::{self, Function, Import, Module}
 };
 
@@ -106,10 +106,8 @@ impl NameResolver {
     pub fn resolve_expr(&mut self, expr: Expression) -> ResolutionResult<Expression> {
         match expr {
             Expression::Identifier(identifier, _) => self.resolve_identifier(identifier),
-            Expression::Binary(binary) => self.resolve_binary(binary),
             Expression::Application(application) => self.resolve_application(application),
             Expression::Let(lett) => self.resolve_let(lett),
-            Expression::Lambda(lambda) => self.resolve_lambda(lambda),
             Expression::Access(access) => self.resolve_access(access),
             literal => Ok(literal),
         }
@@ -137,13 +135,6 @@ impl NameResolver {
         }
     }
 
-    fn resolve_binary(&mut self, Binary { lhs, op, rhs }: Binary) -> ResolutionResult<Expression> {
-        let lhs = Box::new(self.resolve_expr(*lhs)?);
-        let rhs = Box::new(self.resolve_expr(*rhs)?);
-
-        Ok(Expression::Binary(Binary { lhs, op, rhs }))
-    }
-
     fn resolve_application(&mut self, Application { expr, args }: Application) -> ResolutionResult<Expression> {
         let expr = Box::new(self.resolve_expr(*expr)?);
         let args = args
@@ -168,22 +159,6 @@ impl NameResolver {
 
 
         Ok(Expression::Let(Let { expr, type_expr, branches: resolved_branches }))
-    }
-
-    fn resolve_lambda(&mut self, Lambda { params, body }: Lambda) -> ResolutionResult<Expression> {
-        let params = params
-            .into_iter()
-            .map(|param| self.resolve_pattern(param))
-            .collect::<Vec<_>>();
-
-        let local_count = params
-            .iter()
-            .map(|param| self.push_names_in_pattern(param))
-            .sum::<usize>();
-        let body = Box::new(self.resolve_expr(*body)?);
-        self.locals.truncate(self.locals.len() - local_count);
-
-        Ok(Expression::Lambda(Lambda { params, body }))
     }
 
     // TODO: Better error reporting here.
