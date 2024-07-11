@@ -105,7 +105,7 @@ pub struct Function {
 pub struct Import {
     pub parts: Vec<Spanned<Symbol>>,
     pub kind: ImportKind,
-    pub directs: Vec<Spanned<Symbol>>,
+    pub directs: Vec<ast::Direct>,
 }
 
 pub struct Type {

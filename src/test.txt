@@ -1,5 +1,9 @@
-import test2 (Nat, abo)
-import testmodule
+import test2 (Nat (Zero, Succ), abo)
+import testmodule (
+    testfile::TestFileType (TestFileType),
+    innermodule::innerfile2,
+    innermodule::innerfile(gjgj, InnerType (InnerType))
+)
 
 func nat(Nat) -> Nat
     = x -> test2::Nat::Succ(x)
@@ -7,32 +11,32 @@ func nat(Nat) -> Nat
 func foo(A) -> B
     = x -> B::foo(x)
 
-func bar(testmodule::testfile::TestFileType) -> testmodule::testfile::TestFileType
-    = x -> testmodule::testfile::TestFileType::TestFileType()
+func bar(TestFileType) -> TestFileType
+    = x -> TestFileType()
 
-func super(testmodule::innermodule::innerfile::InnerType) -> testmodule::innermodule::innerfile::InnerType
+func super(InnerType) -> InnerType
     = x -> abo(x)
 
 type A = foo(B)
 type B = foo(A)
 
-func main() -> testmodule::innermodule::innerfile::InnerType = ->
-    abo(testmodule::innermodule::innerfile::InnerType::InnerType())
+func main() -> InnerType = ->
+    abo(InnerType())
 
 func main2() -> Nat = ->
     test2::add(
-        test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Zero())),
-        test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Succ(test2::Nat::Zero()))))
+        Succ(Succ(Zero())),
+        Succ(Succ(Succ(Succ(Zero()))))
     )
 
-func a() -> testmodule::innermodule::innerfile2::InnerFileType2 = -> testmodule::innermodule::innerfile::gjgj()
+func a() -> innerfile2::InnerFileType2 = -> gjgj()
 
 func test() -> Nat = ->
-    let test2::Nat::Zero()
-        = test2::Nat::Succ(test2::Nat::Succ(m)) -> m
-        | zero                                  -> zero
+    let Zero()
+        = Succ(Succ(m)) -> m
+        | zero          -> zero
 
 func add(Nat, Nat) -> Nat
-    = n, test2::Nat::Zero()  -> n
-    | n, test2::Nat::Succ(m) -> test2::Nat::Succ(add(n, m))
+    = n, Zero()  -> n
+    | n, Succ(m) -> Succ(add(n, m))
 

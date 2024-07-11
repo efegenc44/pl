@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::{read_dir, read_to_string}, iter::Peekable, path::Pa
 
 use crate::{
     backend::ast::{
-        AbsoluteBound, Access, Application, Bound, Declaration, Expression, ImportKind, Let, Pattern, TypeExpression, TypeFunction
+        AbsoluteBound, Access, Application, Bound, Declaration, Direct, Expression, ImportKind, Let, Pattern, TypeExpression, TypeFunction
     },
     frontend::token::Token,
 };
@@ -295,7 +295,7 @@ impl<'source> Parser<'source> {
         let kind = Self::parse_import(import_path.clone(), &parts)?;
 
         let directs = if self.next_peek_is(&Token::OpeningParenthesis) {
-            self.comma_seperated_until(Self::expect_identifier, Token::ClosingParenthesis)?
+            self.comma_seperated_until(Self::parse_direct_import, Token::ClosingParenthesis)?
         } else {
             vec![]
         };
@@ -343,6 +343,21 @@ impl<'source> Parser<'source> {
 
             Ok(ImportKind::File(import))
         }
+    }
+
+    fn parse_direct_import(&mut self) -> ParseResult<Direct> {
+        let mut parts = vec![self.expect_identifier()?];
+        while self.next_peek_is(&Token::DoubleColon) {
+            parts.push(self.expect_identifier()?);
+        }
+
+        let directs = if self.next_peek_is(&Token::OpeningParenthesis) {
+            self.comma_seperated_until(Self::parse_direct_import, Token::ClosingParenthesis)?
+        } else {
+            vec![]
+        };
+
+        Ok(Direct { parts, directs })
     }
 
     fn type_constructor(&mut self) -> ParseResult<(Spanned<Symbol>, Vec<TypeExpression>)> {

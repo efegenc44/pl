@@ -129,13 +129,19 @@ pub enum Declaration {
     Import {
         parts: Vec<Spanned<Symbol>>,
         kind: ImportKind,
-        directs: Vec<Spanned<Symbol>>,
+        directs: Vec<Direct>,
         path: Symbol,
     },
     Type {
         name: Spanned<Symbol>,
         consts: Vec<(Spanned<Symbol>, Vec<TypeExpression>)>
     }
+}
+
+#[derive(Clone)]
+pub struct Direct {
+    pub parts: Vec<Spanned<Symbol>>,
+    pub directs: Vec<Direct>
 }
 
 pub enum ImportKind {

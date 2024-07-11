@@ -206,7 +206,11 @@ impl TypeChecker {
     }
 
     fn type_check_type_access(&self, module: &Symbol, typ: &Symbol) -> Type {
-        self.modules[module].types[typ].clone()
+        let types = &self.modules[module];
+        // dbg!(types.types.keys());
+        // dbg!(module);
+        // dbg!(typ);
+        types.types[typ].clone()
     }
 
     fn type_check_function(&mut self, module_path: &Symbol, Function { name, params:_ , ret: _, branches }: &Function) -> TypeCheckResult<()> {
