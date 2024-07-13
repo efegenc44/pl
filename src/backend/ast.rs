@@ -69,24 +69,30 @@ impl Display for Bound {
 }
 
 #[derive(Clone, Debug)]
+pub struct ModuleBound {
+    pub module: Symbol,
+    pub name: Symbol
+}
+
+#[derive(Clone, Debug)]
+pub struct ConstructorBound {
+    pub module: Symbol,
+    pub typ: Symbol,
+    pub name: Symbol
+}
+
+#[derive(Clone, Debug)]
 pub enum AbsoluteBound {
-    FromModule {
-        module: Symbol,
-        name: Symbol
-    },
-    Constructor {
-        module: Symbol,
-        typ: Symbol,
-        name: Symbol
-    },
+    Module(ModuleBound),
+    Constructor(ConstructorBound),
     Undetermined,
 }
 
 impl Display for AbsoluteBound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FromModule { module, name } => write!(f, "{module}::{name}"),
-            Self::Constructor { module, typ, name } => write!(f, "{module}::{typ}::{name}"),
+            Self::Module(ModuleBound { module, name }) => write!(f, "{module}::{name}"),
+            Self::Constructor(ConstructorBound { module, typ, name }) => write!(f, "{module}::{typ}::{name}"),
             Self::Undetermined => write!(f, "Undetermined"),
         }
     }

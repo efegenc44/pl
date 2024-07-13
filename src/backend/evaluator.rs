@@ -2,7 +2,7 @@ use std::{collections::HashMap, iter};
 
 use crate::frontend::token::Symbol;
 
-use super::{ast::{AbsoluteBound, Application, Bound, Expression, Let, Pattern}, module::{self, Function, Import, Module}, value::{FunctionValue, Value}};
+use super::{ast::{AbsoluteBound, Application, Bound, ConstructorBound, Expression, Let, ModuleBound, Pattern}, module::{self, Function, Import, Module}, value::{FunctionValue, Value}};
 
 pub struct Evaluator {
     modules: HashMap<Symbol, Values>,
@@ -112,11 +112,11 @@ impl Evaluator {
 
     fn eval_access(&self, abs_bound: &AbsoluteBound) -> Value {
         match abs_bound {
-            AbsoluteBound::FromModule { module, name } => {
+            AbsoluteBound::Module(ModuleBound { module, name }) => {
                 let function = self.modules[module].functions[name].clone();
                 Value::Function(function)
             }
-            AbsoluteBound::Constructor { module, typ, name } => {
+            AbsoluteBound::Constructor(ConstructorBound { module, typ, name }) => {
                 let interface = &self.modules[module];
                 // TODO: If constructor does not take any arguments, does not return a function type
                 let arity = interface.constructors[typ][name].clone();

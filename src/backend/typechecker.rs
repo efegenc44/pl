@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, iter};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::{ast::{AbsoluteBound, Application, Bound, Expression, Let, Pattern, TypeExpression, TypeFunction}, module::{self, Function, Import, Module}, typ::{self, Type}};
+use super::{ast::{AbsoluteBound, Application, Bound, ConstructorBound, Expression, Let, ModuleBound, Pattern, TypeExpression, TypeFunction}, module::{self, Function, Import, Module}, typ::{self, Type}};
 
 pub struct  TypeChecker {
     modules: HashMap<Symbol, Types>,
@@ -107,11 +107,11 @@ impl TypeChecker {
 
     fn type_check_access(&self, abs_bound: &AbsoluteBound) -> Type {
         match abs_bound {
-            AbsoluteBound::FromModule { module, name } => {
+            AbsoluteBound::Module(ModuleBound { module, name }) => {
                 let (params, ret) = (&self.modules[module].functions)[name].clone();
                 Type::Function { params, ret: Box::new(ret) }
             },
-            AbsoluteBound::Constructor { module, typ, name } => {
+            AbsoluteBound::Constructor(ConstructorBound { module, typ, name }) => {
                 let interface = &self.modules[module];
                 // TODO: If constructor does not take any arguments, does not return a function type
                 let ret = interface.types[typ].clone();
@@ -133,7 +133,7 @@ impl TypeChecker {
             | (Pattern::Float(_), Type::Float) => Ok(0),
             (Pattern::Constructor { path: _, params, abs_bound }, Type::Custom(type_name)) => {
                 let Type::Function { params: cparams, ret: _ } = (match abs_bound {
-                    AbsoluteBound::Constructor { module, typ: typ_name, name: _ } => {
+                    AbsoluteBound::Constructor(ConstructorBound { module, typ: typ_name, name: _ }) => {
                         let Type::Custom(typ_name) = self.type_check_type_access(module, typ_name) else {
                             unreachable!();
                         };
@@ -144,7 +144,7 @@ impl TypeChecker {
 
                         self.type_check_access(abs_bound)
                     },
-                    AbsoluteBound::FromModule { .. } => unreachable!(),
+                    AbsoluteBound::Module(ModuleBound { .. }) => unreachable!(),
                     AbsoluteBound::Undetermined => unreachable!(),
                 }) else {
                     unreachable!()
@@ -180,7 +180,7 @@ impl TypeChecker {
                 match bound {
                     Bound::Local(_indice) => todo!("Local Type Variables"),
                     Bound::Absolute(abs_bound) => {
-                        let AbsoluteBound::FromModule { module, name } = abs_bound else {
+                        let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
                             unreachable!()
                         };
 
@@ -196,7 +196,7 @@ impl TypeChecker {
                 Type::Function { params, ret }
             },
             TypeExpression::Access(_, abs_bound) => {
-                let AbsoluteBound::FromModule { module, name } = abs_bound else {
+                let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
                     unreachable!()
                 };
 

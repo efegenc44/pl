@@ -8,7 +8,7 @@ use crate::frontend::{
 };
 
 use super::{
-    ast::{AbsoluteBound, Access, Application, Bound, Direct, Expression, Let, Pattern, TypeExpression, TypeFunction},
+    ast::{AbsoluteBound, Access, Application, Bound, ConstructorBound, Direct, Expression, Let, ModuleBound, Pattern, TypeExpression, TypeFunction},
     module::{self, Function, Import, Module}
 };
 
@@ -20,14 +20,11 @@ pub struct NameResolver {
 
 impl NameResolver {
     pub fn new(module: &Module) -> Self {
-        let mut resolver = Self {
-            names: Names::default(),
+        Self {
+            names: Self::collect_names(module),
             locals: Vec::new(),
             module_path: module.path.clone(),
-        };
-
-        resolver.collect_names(module);
-        resolver
+        }
     }
 
     pub fn resolve_module(module: Module) -> ResolutionResult<Module> {
@@ -41,54 +38,60 @@ impl NameResolver {
         })
     }
 
-    fn collect_names(&mut self, module: &Module) {
-        let types = module.types.iter().map(|(type_name, typ)| {
-            (type_name.clone(), typ.consts.iter().map(|(name, _)| name.data.clone()).collect())
-        }).collect();
+    fn collect_names(module: &Module) -> Names {
+        let functions = Self::collect_function_names(&module.functions);
+        let types = Self::collect_type_names(&module.types);
+        let (modules, type_directs, function_directs) = Self::collect_module_names_and_directs(&module.imports);
 
-        let functions = module.functions.keys().cloned().collect();
-
-
-        let mut type_directs = HashMap::new();
-        let mut func_directs = HashMap::new();
-        let mut imports = HashMap::new();
-        for (name, import) in &module.imports {
-            let (names, import_type_directs, import_func_directs, import_module_directs) = self.collect_import_names(import);
-            type_directs.extend(import_type_directs);
-            func_directs.extend(import_func_directs);
-            imports.insert(name.clone(), names);
-            imports.extend(import_module_directs);
-        }
-
-        self.names = Names { functions, imports, types, type_directs, func_directs }
+        Names { functions, modules, types, type_directs, function_directs }
     }
 
-    fn collect_import_names(&mut self, import: &Import)
-        -> ((ImportNames, Symbol), HashMap<Symbol, (HashSet<Symbol>, AbsoluteBound)>, HashMap<Symbol, AbsoluteBound>, HashMap<Symbol, (ImportNames, Symbol)>) {
+    fn collect_function_names(functions: &HashMap<Symbol, Function>) -> FunctionNames {
+        functions.keys().cloned().collect()
+    }
+
+    fn collect_type_names(types: &HashMap<Symbol, module::Type>) -> TypeNames {
+        types.iter().map(|(type_name, typ)| {
+            (type_name.clone(), typ.consts.iter().map(|(name, _)| name.data.clone()).collect())
+        }).collect()
+    }
+
+    fn collect_module_names_and_directs(imports: &HashMap<Symbol, Import>) -> (ModuleNames, TypeDirects, FunctionDirects) {
+        let mut type_directs = HashMap::new();
+        let mut function_directs = HashMap::new();
+        let mut modules = HashMap::new();
+        for (name, import) in imports {
+            let (import_names, (import_type_directs, import_function_directs, import_module_directs)) =
+                Self::collect_import_names_and_directs(import);
+
+            type_directs.extend(import_type_directs);
+            function_directs.extend(import_function_directs);
+            modules.insert(name.clone(), import_names);
+            modules.extend(import_module_directs);
+        }
+
+        (modules, type_directs, function_directs)
+    }
+
+    fn collect_import_names_and_directs(import: &Import) -> ((ImportNames, Symbol), ImportDirects) {
         match &import.kind {
             module::ImportKind::File(module) => {
-                let types: HashMap<_, _> = module.types.iter().map(|(type_name, typ)| {
-                    (type_name.clone(), typ.consts.iter().map(|(name, _)| name.data.clone()).collect())
-                }).collect();
+                let functions = Self::collect_function_names(&module.functions);
+                let types = Self::collect_type_names(&module.types);
 
-                let functions: HashSet<_> = module.functions.keys().cloned().collect();
+                let (type_directs, function_directs) =
+                    Self::resolve_module_directs(&functions, &types, &import.directs, &module.path).unwrap();
 
-                let (type_directs, func_directs) =
-                    Self::resolve_module_directs(&functions, &types, &import.directs, module.path.clone()).unwrap();
-
-                ((ImportNames::Module { functions, types }, module.path.clone()), type_directs, func_directs, HashMap::new())
+                ((ImportNames::Module(functions, types), module.path.clone()), (type_directs, function_directs, HashMap::default()))
             },
             module::ImportKind::Folder((imports, path)) => {
-                let mut modules = HashMap::new();
-                for (name, import) in imports {
-                    let (module, path) = self.collect_import_names(import).0;
-                    modules.insert(name.clone(), (module, path));
-                }
+                let modules = imports.iter().map(|(name, import)| {
+                    (name.clone(), Self::collect_import_names_and_directs(import).0)
+                }).collect();
 
-                let (group_type_directs, group_func_directs, group_module_directs) =
-                    Self::resolve_group_directs(&modules, &import.directs).unwrap();
+                let import_directs = Self::resolve_group_directs(&modules, &import.directs).unwrap();
 
-                ((ImportNames::Group(modules), path.clone()), group_type_directs, group_func_directs, group_module_directs)
+                ((ImportNames::Group(modules), path.clone()), import_directs)
             },
         }
 
@@ -108,18 +111,14 @@ impl NameResolver {
         let bound = if let Some(indice) = self.locals.iter().rev().position(|local| local == &identifier.data) {
             Bound::Local(indice)
         } else if self.names.functions.contains(&identifier.data) {
-            Bound::Absolute(self.make_path(identifier.data.clone()))
-        } else if let Some(abs_bound) = self.names.func_directs.get(&identifier.data) {
+            Bound::Absolute(AbsoluteBound::Module(ModuleBound { module: self.module_path.clone(), name: identifier.data.clone() }))
+        } else if let Some(abs_bound) = self.names.function_directs.get(&identifier.data) {
             Bound::Absolute(abs_bound.clone())
         } else {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
 
         Ok(Expression::Identifier(identifier, bound))
-    }
-
-    fn make_path(&self, name: Symbol) -> AbsoluteBound {
-        AbsoluteBound::FromModule { module: self.module_path.clone(), name }
     }
 
     fn resolve_application(&mut self, Application { expr, args }: Application) -> ResolutionResult<Expression> {
@@ -138,55 +137,32 @@ impl NameResolver {
         let mut resolved_branches = vec![];
         for (pattern, body) in branches {
             let pattern = self.resolve_pattern(pattern);
-            let local_count = self.push_names_in_pattern(&pattern);
+            let local_count = self.push_pattern_locals(&pattern);
             let body = Box::new(self.resolve_expr(*body)?);
             self.locals.truncate(self.locals.len() - local_count);
             resolved_branches.push((pattern, body));
         }
 
-
         Ok(Expression::Let(Let { expr, type_expr, branches: resolved_branches }))
     }
 
-    fn resolve_module_directs(functions: &HashSet<Symbol>, types: &HashMap<Symbol, HashSet<Symbol>>, directs: &Vec<Direct>, module_path: Symbol)
-        -> ResolutionResult<(HashMap<Symbol, (HashSet<Symbol>, AbsoluteBound)>, HashMap<Symbol, AbsoluteBound>)> {
+    fn resolve_module_directs(functions: &FunctionNames, types: &TypeNames, directs: &[Direct], module_path: &Symbol)
+        -> ResolutionResult<(TypeDirects, FunctionDirects)>
+    {
+        let mut function_directs = HashMap::new();
         let mut type_directs = HashMap::new();
-        let mut func_directs = HashMap::new();
 
         for Direct { parts, directs } in directs {
             match &parts[..] {
                 [name] => {
-                    let bound = AbsoluteBound::FromModule { module: module_path.clone(), name: name.data.clone() };
+                    let bound = ModuleBound { module: module_path.clone(), name: name.data.clone() };
 
                     // NOTE: While importing Type has priority.
-                    if let Some(typ) = types.get(&name.data) {
-                        type_directs.insert(name.data.clone(), (typ.clone(), bound));
-
-                        for Direct { parts, directs } in directs {
-                            if !directs.is_empty() {
-                                todo!("Unbound name in module")
-                            }
-
-                            match &parts[..] {
-                                [cons_name] => {
-                                    let bound = AbsoluteBound::Constructor {
-                                        module: module_path.clone(),
-                                        typ: name.data.clone(),
-                                        name: cons_name.data.clone()
-                                    };
-
-                                    typ
-                                        .contains(&cons_name.data)
-                                        .then_some(())
-                                        .ok_or(ResolutionError::UnboundInModule { module_name: name.data.clone(), name: cons_name.data.clone() }.attach(name.span))?;
-
-                                    func_directs.insert(cons_name.data.clone(), bound);
-                                },
-                                _ => todo!("Unbound name in module"),
-                            }
-                        }
+                    if let Some(constructors) = types.get(&name.data) {
+                        type_directs.insert(name.data.clone(), (constructors.clone(), bound));
+                        function_directs.extend(Self::resolve_type_directs(directs, constructors, module_path, name)?);
                     } else if functions.contains(&name.data) {
-                        func_directs.insert(name.data.clone(), bound);
+                        function_directs.insert(name.data.clone(), AbsoluteBound::Module(bound));
 
                         if !directs.is_empty() {
                             todo!("Unbound name in module")
@@ -200,14 +176,13 @@ impl NameResolver {
             };
         }
 
-        Ok((type_directs, func_directs))
+        Ok((type_directs, function_directs))
     }
 
-    fn resolve_group_directs(modules: &HashMap<Box<str>, (ImportNames, Box<str>)>, directs: &Vec<Direct>)
-        -> ResolutionResult<(HashMap<Symbol, (HashSet<Symbol>, AbsoluteBound)>, HashMap<Symbol, AbsoluteBound>, HashMap<Symbol, (ImportNames, Symbol)>)> {
-        let mut type_directs = HashMap::new();
-        let mut func_directs = HashMap::new();
+    fn resolve_group_directs(modules: &ModuleNames, directs: &Vec<Direct>) -> ResolutionResult<ImportDirects> {
+        let mut function_directs = HashMap::new();
         let mut module_directs = HashMap::new();
+        let mut type_directs = HashMap::new();
 
         for Direct { parts, directs } in directs {
             match &parts[..] {
@@ -217,18 +192,18 @@ impl NameResolver {
                     };
 
                     match names {
-                        ImportNames::Module { functions, types } => {
-                            let (module_type_directs, module_func_directs) =
-                                Self::resolve_module_directs(functions, types, directs, path.clone()).unwrap();
+                        ImportNames::Module(functions, types) => {
+                            let (module_type_directs, module_function_directs) =
+                                Self::resolve_module_directs(functions, types, directs, path).unwrap();
 
-                            func_directs.extend(module_func_directs);
+                            function_directs.extend(module_function_directs);
                             type_directs.extend(module_type_directs);
                         },
                         ImportNames::Group(modules) => {
-                            let (group_type_directs, group_func_directs, group_module_directs) =
+                            let (group_type_directs, group_function_directs, group_module_directs) =
                                 Self::resolve_group_directs(modules, directs).unwrap();
 
-                            func_directs.extend(group_func_directs);
+                            function_directs.extend(group_function_directs);
                             type_directs.extend(group_type_directs);
                             module_directs.extend(group_module_directs);
                         },
@@ -253,57 +228,34 @@ impl NameResolver {
                     }
 
                     match &current_import.0 {
-                        ImportNames::Module { types, ..  } => {
-                            let bound = AbsoluteBound::FromModule {
+                        ImportNames::Module(_functions, types) => {
+                            let bound = ModuleBound {
                                 module: current_import.1.clone(),
                                 name: name.data.clone()
                             };
 
-                            let typ = types.get(&name.data)
+                            let constructors = types.get(&name.data)
                                 .ok_or(ResolutionError::UnboundInModule { module_name: groups.last().unwrap().data.clone(), name: name.data.clone() }.attach(name.span))?;
 
-                            type_directs.insert(name.data.clone(), (typ.clone(), bound));
-
-                            for Direct { parts, directs } in directs {
-                                if !directs.is_empty() {
-                                    todo!("Unbound name in module")
-                                }
-
-                                match &parts[..] {
-                                    [cons_name] => {
-                                        let bound = AbsoluteBound::Constructor {
-                                            module: current_import.1.clone(),
-                                            typ: name.data.clone(),
-                                            name: cons_name.data.clone()
-                                        };
-
-                                        typ
-                                            .contains(&cons_name.data)
-                                            .then_some(())
-                                            .ok_or(ResolutionError::UnboundInModule { module_name: name.data.clone(), name: cons_name.data.clone() }.attach(name.span))?;
-
-                                        func_directs.insert(cons_name.data.clone(), bound);
-                                    },
-                                    _ => todo!("Unbound name in module"),
-                                }
-                            }
+                            type_directs.insert(name.data.clone(), (constructors.clone(), bound));
+                            function_directs.extend(Self::resolve_type_directs(directs, constructors, &current_import.1, name)?);
                         }
                         ImportNames::Group(modules) => {
                             let (names, path) = modules.get(&name.data).expect("unbound");
 
                             match names {
-                                ImportNames::Module { functions, types } => {
-                                    let (module_type_directs, module_func_directs) =
-                                        Self::resolve_module_directs(functions, types, directs, path.clone()).unwrap();
+                                ImportNames::Module(functions, types) => {
+                                    let (module_type_directs, module_function_directs) =
+                                        Self::resolve_module_directs(functions, types, directs, path).unwrap();
 
-                                    func_directs.extend(module_func_directs);
+                                    function_directs.extend(module_function_directs);
                                     type_directs.extend(module_type_directs);
                                 },
                                 ImportNames::Group(modules) => {
-                                    let (group_type_directs, group_func_directs, group_module_directs) =
+                                    let (group_type_directs, group_function_directs, group_module_directs) =
                                         Self::resolve_group_directs(modules, directs).unwrap();
 
-                                    func_directs.extend(group_func_directs);
+                                    function_directs.extend(group_function_directs);
                                     type_directs.extend(group_type_directs);
                                     module_directs.extend(group_module_directs);
                                 },
@@ -317,7 +269,38 @@ impl NameResolver {
             }
         }
 
-        Ok((type_directs, func_directs, module_directs))
+        Ok((type_directs, function_directs, module_directs))
+    }
+
+    fn resolve_type_directs(directs: &[Direct], constructors: &FunctionNames, module_path: &Symbol, type_name: &Spanned<Symbol>)
+        -> ResolutionResult<FunctionDirects>
+    {
+        let mut function_directs = HashMap::new();
+        for Direct { parts, directs } in directs {
+            if !directs.is_empty() {
+                todo!("Unbound name in module")
+            }
+
+            match &parts[..] {
+                [constructor_name] => {
+                    let bound = AbsoluteBound::Constructor(ConstructorBound {
+                        module: module_path.clone(),
+                        typ: type_name.data.clone(),
+                        name: constructor_name.data.clone()
+                    });
+
+                    constructors
+                        .contains(&constructor_name.data)
+                        .then_some(())
+                        .ok_or(ResolutionError::UnboundInModule { module_name: type_name.data.clone(), name: constructor_name.data.clone() }.attach(type_name.span))?;
+
+                    function_directs.insert(constructor_name.data.clone(), bound);
+                },
+                _ => todo!("Unbound name in module"),
+            }
+        }
+
+        Ok(function_directs)
     }
 
     // TODO: Better error reporting here.
@@ -325,11 +308,11 @@ impl NameResolver {
         let abs_bound = match &path[..] {
             [_] | [] => unreachable!(),
             [from, name] => {
-                if let Some((import, import_path)) = self.names.imports.get(&from.data) {
-                    let bound = AbsoluteBound::FromModule {
+                if let Some((import, import_path)) = self.names.modules.get(&from.data) {
+                    let bound = AbsoluteBound::Module(ModuleBound {
                         module: import_path.clone(),
                         name: name.data.clone()
-                    };
+                    });
 
                     import
                         .as_module()
@@ -340,24 +323,24 @@ impl NameResolver {
                         .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
 
                 } else if let Some(typ) = self.names.types.get(&from.data) {
-                    let bound = AbsoluteBound::Constructor {
+                    let bound = AbsoluteBound::Constructor(ConstructorBound {
                         module: self.module_path.clone(),
                         typ: from.data.clone(),
                         name: name.data.clone()
-                    };
+                    });
 
                     typ
                         .contains(&name.data)
                         .then_some(bound)
                         .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
                 } else if let Some((typ, path)) = self.names.type_directs.get(&from.data) {
-                    let AbsoluteBound::FromModule { module, name: type_name } = path else { unreachable!() };
+                    let ModuleBound { module, name: type_name } = path;
 
-                    let bound = AbsoluteBound::Constructor {
+                    let bound = AbsoluteBound::Constructor(ConstructorBound {
                         module: module.clone(),
                         typ: type_name.clone(),
                         name: name.data.clone()
-                    };
+                    });
 
                     typ
                         .contains(&name.data)
@@ -370,7 +353,7 @@ impl NameResolver {
             // In this case groups.len() >= 1 and they have to refer to a module group.
             [groups@.., from, name] => {
                 let first = &groups.first().unwrap();
-                let mut current_import = self.names.imports
+                let mut current_import = self.names.modules
                     .get(&first.data)
                     .ok_or(ResolutionError::NonExistantNamespace(first.data.clone()).attach(first.span))?;
 
@@ -385,12 +368,12 @@ impl NameResolver {
 
                 match &current_import.0 {
                     // If the current is a 'Module', before should be a 'Type' and we should access to a constructor.
-                    ImportNames::Module { types, .. } => {
-                        let bound = AbsoluteBound::Constructor {
+                    ImportNames::Module(_functions, types) => {
+                        let bound = AbsoluteBound::Constructor(ConstructorBound {
                             module: current_import.1.clone(),
                             typ: from.data.clone(),
                             name: name.data.clone()
-                        };
+                        });
 
                         types.get(&from.data)
                             .ok_or(ResolutionError::UnboundInModule { module_name: from.data.clone(), name: name.data.clone() }.attach(name.span))?
@@ -403,10 +386,10 @@ impl NameResolver {
                         let (module, path) = modules.get(&from.data)
                             .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?;
 
-                        let bound = AbsoluteBound::FromModule {
+                        let bound = AbsoluteBound::Module(ModuleBound {
                             module: path.clone(),
                             name: name.data.clone()
-                        };
+                        });
 
                         module
                             .as_module()
@@ -434,14 +417,12 @@ impl NameResolver {
     fn resolve_type_identifier(&self, identifier: Spanned<Symbol>) -> ResolutionResult<TypeExpression> {
         // TODO: Local type variables for polymorphic types.
         let bound = if self.names.types.contains_key(&identifier.data) {
-            Bound::Absolute(self.make_path(identifier.data.clone()))
-        } else if let Some(abs_bound) = self.names.type_directs.get(&identifier.data) {
-            Bound::Absolute(abs_bound.1.clone())
+            Bound::Absolute(AbsoluteBound::Module(ModuleBound { module: self.module_path.clone(), name: identifier.data.clone() }))
+        } else if let Some((_, bound)) = self.names.type_directs.get(&identifier.data) {
+            Bound::Absolute(AbsoluteBound::Module(bound.clone()))
         } else {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
-
-        // dbg!(&identifier.data, &bound, &self.module_path);
 
         Ok(TypeExpression::Identifier(identifier, bound))
     }
@@ -460,14 +441,14 @@ impl NameResolver {
         let bound = match &path[..] {
             [_] | [] => unreachable!(),
             [from, name] => {
-                let (import, real_path) = self.names.imports
+                let (import, real_path) = self.names.modules
                     .get(&from.data)
                     .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?;
 
-                let bound = AbsoluteBound::FromModule {
+                let bound = AbsoluteBound::Module(ModuleBound {
                     module: real_path.clone(),
                     name: name.data.clone()
-                };
+                });
 
                 import
                     .as_module()
@@ -480,7 +461,7 @@ impl NameResolver {
             // In this case modules.len() >= 1 and they have to refer to a module.
             [modules@.., from, name] => {
                 let first = &modules.first().unwrap();
-                let mut current_import = self.names.imports
+                let mut current_import = self.names.modules
                     .get(&first.data)
                     .ok_or(ResolutionError::NonExistantNamespace(first.data.clone()).attach(first.span))?;
 
@@ -498,10 +479,10 @@ impl NameResolver {
                     .get(&from.data)
                     .ok_or(ResolutionError::NonExistantNamespace(from.data.clone()).attach(from.span))?;
 
-                let bound = AbsoluteBound::FromModule {
+                let bound = AbsoluteBound::Module(ModuleBound {
                     module: path.clone(),
                     name: name.data.clone()
-                };
+                });
 
                 module
                     .as_module()
@@ -517,19 +498,22 @@ impl NameResolver {
     }
 
     fn resolve_function(&mut self, Function { name, params, ret, branches }: Function) -> ResolutionResult<Function> {
-        let params = params.into_iter().map(|param| self.resolve_type_expr(param)).collect::<Result<Vec<_>, _>>()?;
+        let params = params
+            .into_iter()
+            .map(|param| self.resolve_type_expr(param))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut resolved_branches = vec![];
         for (patterns, body) in branches {
-            let mut local_count = 0;
             let patterns = patterns
                 .into_iter()
                 .map(|pattern| self.resolve_pattern(pattern))
                 .collect::<Vec<_>>();
 
-            for pattern in &patterns {
-                local_count += self.push_names_in_pattern(pattern);
-            }
+            let local_count = patterns
+                .iter()
+                .map(|pattern| self.push_pattern_locals(pattern))
+                .sum::<usize>();
 
             let body = self.resolve_expr(body)?;
             self.locals.truncate(self.locals.len() - local_count);
@@ -554,54 +538,47 @@ impl NameResolver {
     fn resolve_types(&mut self, types: HashMap<Symbol, module::Type>) -> ResolutionResult<HashMap<Symbol, module::Type>> {
         let mut resolved_types = HashMap::new();
         for (type_name, module::Type { name, consts }) in types {
-            let mut resolved_consts = vec![];
+            let mut resolved_constructors = vec![];
             for (name, params) in consts {
-                let params = params.into_iter().map(|param| self.resolve_type_expr(param)).collect::<Result<Vec<_>, _>>()?;
-                resolved_consts.push((name, params));
+                let params = params
+                    .into_iter()
+                    .map(|param| self.resolve_type_expr(param))
+                    .collect::<Result<Vec<_>, _>>()?;
+                resolved_constructors.push((name, params));
             }
-            resolved_types.insert(type_name, module::Type { name, consts: resolved_consts });
+            resolved_types.insert(type_name, module::Type { name, consts: resolved_constructors });
         }
 
         Ok(resolved_types)
     }
 
     fn resolve_import(&mut self, Import { parts, kind, directs }: Import) -> ResolutionResult<Import> {
-        match kind {
+        let kind = match kind {
             module::ImportKind::File(module) => {
-
-                let path = module.path.clone();
-                // dbg!(&path);
+                let import_path = module.path.clone().into();
                 let module = NameResolver::resolve_module(module).map_err(|error| {
                     let first = parts.first().unwrap().span;
                     let last = parts.last().unwrap().span;
                     let span = first.extend(last);
                     ResolutionError::ImportError {
-                        import_path: path.clone().into(),
+                        import_path,
                         error: Box::new(error),
                     }
                     .attach(span)
                 })?;
 
-                Ok(Import { parts, kind: module::ImportKind::File(module), directs })
+                module::ImportKind::File(module)
             },
             module::ImportKind::Folder((imports, path)) => {
-                let mut modules = HashMap::new();
-                for (name, import) in imports {
-                    modules.insert(name, self.resolve_import(import)?);
-                }
-
-                Ok(Import {
-                    parts,
-                    kind: module::ImportKind::Folder((self.resolve_imports(modules)?, path)),
-                    directs
-                })
+                module::ImportKind::Folder((self.resolve_imports(imports)?, path))
             },
-        }
+        };
+
+        Ok(Import { parts, kind, directs })
     }
 
     fn resolve_imports(&mut self, imports: HashMap<Symbol, Import>) -> ResolutionResult<HashMap<Symbol, Import>> {
-        let mut resolved_imports = HashMap::new();
-
+        let mut resolved_imports = HashMap::with_capacity(imports.len());
         for (name, import) in imports {
             resolved_imports.insert(name, self.resolve_import(import)?);
         }
@@ -633,62 +610,67 @@ impl NameResolver {
 
                 assert!(matches!(abs_bound, AbsoluteBound::Constructor { .. }));
 
-                let params = params.into_iter().map(|param| self.resolve_pattern(param)).collect();
+                let params = params
+                    .into_iter()
+                    .map(|param| self.resolve_pattern(param))
+                    .collect();
+
                 Pattern::Constructor { path, abs_bound, params }
             },
             literal => literal
         }
     }
 
-    fn push_names_in_pattern(&mut self, pattern: &Pattern) -> usize {
+    fn push_pattern_locals(&mut self, pattern: &Pattern) -> usize {
         match pattern {
             Pattern::Any(identifier) => {
                 self.locals.push(identifier.data.clone());
                 1
             }
-            Pattern::Constructor { path: _, params, abs_bound: _ } => {
-                let mut local_count = 0;
-                for param in params {
-                    local_count += self.push_names_in_pattern(param);
-                }
-
-                local_count
+            Pattern::Constructor { params, .. } => {
+                params.iter().map(|param| self.push_pattern_locals(param)).sum()
             },
-            Pattern::String(_) | Pattern::Float(_) | Pattern::Integer(_) => 0,
+            Pattern::String(_)
+            | Pattern::Float(_)
+            | Pattern::Integer(_) => 0,
         }
     }
 }
 
-#[derive(Clone, Default)]
+type FunctionNames = HashSet<Symbol>;
+type TypeNames = HashMap<Symbol, FunctionNames>;
+type ModuleNames = HashMap<Symbol, (ImportNames, Symbol)>;
+
+type TypeDirects = HashMap<Symbol, (FunctionNames, ModuleBound)>;
+type FunctionDirects = HashMap<Symbol, AbsoluteBound>;
+type ImportDirects = (TypeDirects, FunctionDirects, ModuleNames);
+
 struct Names {
-    functions: HashSet<Symbol>,
-    imports: HashMap<Symbol, (ImportNames, Symbol)>,
-    types: HashMap<Symbol, HashSet<Symbol>>,
-    type_directs: HashMap<Symbol, (HashSet<Symbol>, AbsoluteBound)>,
-    func_directs: HashMap<Symbol, AbsoluteBound>,
+    functions: FunctionNames,
+    modules: ModuleNames,
+    types: TypeNames,
+    type_directs: TypeDirects,
+    function_directs: FunctionDirects,
 }
 
 #[derive(Clone)]
 enum ImportNames {
-    Module {
-        functions: HashSet<Symbol>,
-        types: HashMap<Symbol, HashSet<Symbol>>,
-    },
-    Group(HashMap<Symbol, (ImportNames, Symbol)>)
+    Module(FunctionNames, TypeNames),
+    Group(ModuleNames)
 }
 
 impl ImportNames {
-    fn as_group(&self) -> Option<&HashMap<Symbol, (ImportNames, Symbol)>> {
-        if let Self::Group(v) = self {
-            Some(v)
+    fn as_module(&self) -> Option<(&FunctionNames, &TypeNames)> {
+        if let Self::Module(functions, types) = self {
+            Some((functions, types))
         } else {
             None
         }
     }
 
-    fn as_module(&self) -> Option<(&HashSet<Symbol>, &HashMap<Symbol, HashSet<Symbol>>)> {
-        if let Self::Module { functions, types } = self {
-            Some((functions, types))
+    fn as_group(&self) -> Option<&ModuleNames> {
+        if let Self::Group(v) = self {
+            Some(v)
         } else {
             None
         }
