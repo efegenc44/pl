@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::frontend::token::Symbol;
 
 use super::ast::{Expression, Pattern};
@@ -8,13 +10,28 @@ pub enum Value {
     Float(f32),
     String(String),
     Nothing,
-    Custom {
-        constructor: Symbol,
-        values: Vec<Value>
-    },
+    Custom(CustomValue),
     Function(FunctionValue),
-    Constructor(Symbol, usize)
+    Constructor(Symbol)
 }
+
+impl Value {
+    pub fn custom(constructor: Symbol, values: Vec<Value>) -> Value {
+        Value::Custom(Rc::new(CustomInstance { constructor, values }))
+    }
+}
+
+pub struct FunctionInstance {
+    pub branches: Vec<(Vec<Pattern>, Expression)>,
+}
+pub type FunctionValue = Rc<FunctionInstance>;
+
+pub struct CustomInstance {
+    pub constructor: Symbol,
+    pub values: Vec<Value>
+}
+pub type CustomValue = Rc<CustomInstance>;
+
 
 impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -29,26 +46,21 @@ impl std::fmt::Display for Value {
             Self::Float(lit) => write!(f, "{lit}"),
             Self::String(lit) => write!(f, "{lit}"),
             Self::Nothing => write!(f, "nothing"),
-            Self::Custom { constructor, values } => {
-                write!(f, "{constructor}")?;
-
-                if values.len() == 0 {
-                    return Ok(());
+            Self::Custom(custom) => {
+                write!(f, "{}", &custom.constructor)?;
+                match &custom.values[..] {
+                    [rest@.., last] => {
+                        write!(f, "(")?;
+                        for value in rest {
+                            write!(f, "{value}, ")?;
+                        }
+                        write!(f, "{last})")
+                    }
+                    [] => Ok(())
                 }
-
-                write!(f, "(")?;
-                for value in &values[..values.len() - 1] {
-                    write!(f, "{value}, ")?;
-                }
-                write!(f, "{})", values.last().unwrap())
             },
             Self::Function(_) => write!(f, "<function>"),
-            Self::Constructor(_, _) => write!(f, "<function>"),
+            Self::Constructor(_) => write!(f, "<function>"),
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctionValue {
-    pub branches: Vec<(Vec<Pattern>, Expression)>,
 }

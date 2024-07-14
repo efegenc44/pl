@@ -56,7 +56,7 @@ fn start_repl() -> io::Result<()> {
     let module = Module::default();
     let mut resolver = NameResolver::new(&module);
     let mut type_checker = TypeChecker::new(&module);
-    let mut evaluator = Evaluator::new(&module);
+    let mut evaluator = Evaluator::with_module(&module);
 
     loop {
         write!(stdout, "> ")?;
