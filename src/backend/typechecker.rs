@@ -2,7 +2,15 @@ use std::{collections::HashMap, fmt::Display, iter};
 
 use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
 
-use super::{ast::{AbsoluteBound, Application, Bound, ConstructorBound, Expression, Let, ModuleBound, Pattern, TypeExpression, TypeFunction}, module::{self, Function, Import, Module}, typ::{self, Type}};
+use super::{
+    ast::{
+        AbsoluteBound, Application, Bound, ConstructorBound,
+        Expression, Let, ModuleBound, Pattern, TypeExpression,
+        TypeFunction
+    },
+    module::{self, Function, Import, Module},
+    typ::{self, Type}
+};
 
 pub struct  TypeChecker {
     modules: HashMap<Symbol, Types>,
@@ -10,13 +18,13 @@ pub struct  TypeChecker {
 }
 
 impl TypeChecker {
-    pub fn new(module: &Module) -> Self {
+    pub fn with_module(module: &Module) -> Self {
         let mut type_checker = Self {
             locals: Vec::new(),
-            modules: HashMap::new(),
+            modules: HashMap::from([
+                (module.path.clone(), Types::with_module(module))
+            ]),
         };
-
-        type_checker.modules.insert(module.path.clone(), Types::default());
 
         // NOTE: Order here is important! (imports => types => constructors => functions)
         type_checker.import_interface(&module.imports);
@@ -55,7 +63,6 @@ impl TypeChecker {
     fn type_check_identifier(&self, bound: &Bound) -> TypeCheckResult<Type> {
         match bound {
             Bound::Local(indice) => Ok(self.locals[self.locals.len() - 1 - indice].clone()),
-            // TODO: Remove to_vec
             Bound::Absolute(abs_bound) => Ok(self.type_check_access(abs_bound)),
             Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
         }
@@ -79,8 +86,7 @@ impl TypeChecker {
     }
 
     fn type_check_let(&mut self, Let { expr, type_expr, branches }: &Let) -> TypeCheckResult<Type> {
-        // Exhaustiveness check.
-
+        // TODO: Check pattern exhaustiveness.
         let typ = if let Some(typ) = type_expr {
             let typ = self.eval_type_expr(typ);
             self.expect_type(expr, &typ)?;
@@ -89,14 +95,13 @@ impl TypeChecker {
             self.type_check_expr(expr)?
         };
 
-        let first_branch = branches.first().unwrap();
-
-        let local_count = self.push_types_in_pattern(&first_branch.0, &typ)?;
-        let result = self.type_check_expr(&first_branch.1)?;
+        let (first_pattern, first_body) = branches.first().unwrap();
+        let local_count = self.define_pattern_types(first_pattern, &typ)?;
+        let result = self.type_check_expr(&first_body)?;
         self.locals.truncate(self.locals.len() - local_count);
 
         for (pattern, body) in &branches[1..] {
-            let local_count = self.push_types_in_pattern(pattern, &typ)?;
+            let local_count = self.define_pattern_types(pattern, &typ)?;
             self.expect_type(body, &result)?;
             self.locals.truncate(self.locals.len() - local_count);
             assert!(self.locals.is_empty())
@@ -122,7 +127,7 @@ impl TypeChecker {
         }
     }
 
-    fn push_types_in_pattern(&mut self, pattern: &Pattern, typ: &Type) -> TypeCheckResult<usize> {
+    fn define_pattern_types(&mut self, pattern: &Pattern, typ: &Type) -> TypeCheckResult<usize> {
         match (pattern, &typ) {
             (Pattern::Any(_), _) => {
                 self.locals.push(typ.clone());
@@ -131,9 +136,9 @@ impl TypeChecker {
             (Pattern::String(_), Type::String)
             | (Pattern::Integer(_), Type::Integer)
             | (Pattern::Float(_), Type::Float) => Ok(0),
-            (Pattern::Constructor { path: _, params, abs_bound }, Type::Custom(type_name)) => {
-                let Type::Function { params: cparams, ret: _ } = (match abs_bound {
-                    AbsoluteBound::Constructor(ConstructorBound { module, typ: typ_name, name: _ }) => {
+            (Pattern::Constructor { params, abs_bound, .. }, Type::Custom(type_name)) => {
+                let type_function = match abs_bound {
+                    AbsoluteBound::Constructor(ConstructorBound { module, typ: typ_name, .. }) => {
                         let Type::Custom(typ_name) = self.type_check_type_access(module, typ_name) else {
                             unreachable!();
                         };
@@ -144,9 +149,10 @@ impl TypeChecker {
 
                         self.type_check_access(abs_bound)
                     },
-                    AbsoluteBound::Module(ModuleBound { .. }) => unreachable!(),
-                    AbsoluteBound::Undetermined => unreachable!(),
-                }) else {
+                    _ => unreachable!()
+                };
+
+                let Type::Function { params: cparams, .. } = type_function else {
                     unreachable!()
                 };
 
@@ -156,7 +162,7 @@ impl TypeChecker {
 
                 let mut local_count = 0;
                 for (cparam, param) in iter::zip(cparams, params) {
-                    local_count += self.push_types_in_pattern(param, &cparam)?;
+                    local_count += self.define_pattern_types(param, &cparam)?;
                 }
 
                 Ok(local_count)
@@ -176,25 +182,8 @@ impl TypeChecker {
 
     fn eval_type_expr(&mut self, type_expr: &TypeExpression) -> Type {
         match type_expr {
-            TypeExpression::Identifier(_, bound) => {
-                match bound {
-                    Bound::Local(_indice) => todo!("Local Type Variables"),
-                    Bound::Absolute(abs_bound) => {
-                        let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
-                            unreachable!()
-                        };
-
-                        self.type_check_type_access(module, name)
-                    },
-                    Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
-                }
-            },
-            TypeExpression::Function(TypeFunction { params, ret }) => {
-                let params = params.iter().map(|param| self.eval_type_expr(param)).collect();
-                let ret = Box::new(self.eval_type_expr(ret));
-
-                Type::Function { params, ret }
-            },
+            TypeExpression::Identifier(_, bound) => self.eval_type_identifier(bound),
+            TypeExpression::Function(type_function) => self.eval_type_function(type_function),
             TypeExpression::Access(_, abs_bound) => {
                 let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
                     unreachable!()
@@ -205,15 +194,35 @@ impl TypeChecker {
         }
     }
 
-    fn type_check_type_access(&self, module: &Symbol, typ: &Symbol) -> Type {
-        let types = &self.modules[module];
-        // dbg!(types.types.keys());
-        // dbg!(module);
-        // dbg!(typ);
-        types.types[typ].clone()
+    fn eval_type_identifier(&mut self, bound: &Bound) -> Type {
+        match bound {
+            Bound::Local(_indice) => todo!("Local Type Variables"),
+            Bound::Absolute(abs_bound) => {
+                let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
+                    unreachable!()
+                };
+
+                self.type_check_type_access(module, name)
+            },
+            Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
+        }
     }
 
-    fn type_check_function(&mut self, module_path: &Symbol, Function { name, params:_ , ret: _, branches }: &Function) -> TypeCheckResult<()> {
+    fn eval_type_function(&mut self, TypeFunction { params, ret }: &TypeFunction) -> Type {
+        let params = params
+            .iter()
+            .map(|param| self.eval_type_expr(param))
+            .collect();
+        let ret = Box::new(self.eval_type_expr(ret));
+
+        Type::Function { params, ret }
+    }
+
+    fn type_check_type_access(&self, module: &Symbol, typ: &Symbol) -> Type {
+        self.modules[module].types[typ].clone()
+    }
+
+    fn type_check_function(&mut self, module_path: &Symbol, Function { name, branches, .. }: &Function) -> TypeCheckResult<()> {
         let (params, ret) = self.modules[module_path].functions[&name.data].clone();
 
         for (patterns, body) in branches {
@@ -223,8 +232,9 @@ impl TypeChecker {
 
             let mut local_count = 0;
             for (pattern, typ) in iter::zip(patterns, &params) {
-                local_count += self.push_types_in_pattern(pattern, &typ)?;
+                local_count += self.define_pattern_types(pattern, &typ)?;
             }
+
             self.expect_type(body, &ret)?;
             self.locals.truncate(self.locals.len() - local_count);
             assert!(self.locals.is_empty())
@@ -233,7 +243,7 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn type_check_import(&mut self, Import { parts, kind, directs: _ }: &Import) -> TypeCheckResult<()> {
+    fn type_check_import(&mut self, Import { parts, kind, .. }: &Import) -> TypeCheckResult<()> {
         match kind {
             module::ImportKind::File(module) => {
                 self.type_check_module(module).map_err(|error| {
@@ -247,10 +257,11 @@ impl TypeChecker {
                     .attach(span)
                 })?;
             },
-            module::ImportKind::Folder((imports, _path)) => {
-                for (_, import) in imports {
-                    self.type_check_import(import)?;
-                }
+            module::ImportKind::Folder((imports, _)) => {
+                imports
+                    .values()
+                    .map(|import| self.type_check_import(import))
+                    .collect::<Result<_, _>>()?
             },
         }
 
@@ -258,28 +269,34 @@ impl TypeChecker {
     }
 
     fn type_interface(&mut self, module_path: &Symbol, types: &HashMap<Symbol, module::Type>) {
-        for module::Type { name, consts: _ } in types.values() {
-            self.modules.get_mut(module_path).unwrap().types.insert(name.data.clone(), Type::Custom(name.data.clone()));
+        for module::Type { name, .. } in types.values() {
+            self.modules.get_mut(module_path).unwrap().types.insert(
+                name.data.clone(),
+                Type::Custom(name.data.clone())
+            );
         }
     }
 
     fn constructor_interface(&mut self, module_path: &Symbol, types: &HashMap<Symbol, module::Type>) {
         for module::Type { name, consts } in types.values() {
-            let mut map = HashMap::new();
+            let mut constructors = HashMap::with_capacity(consts.len());
             for (name, params) in consts {
                 let params = params
                     .iter()
                     .map(|param| self.eval_type_expr(param))
                     .collect();
-                map.insert(name.data.clone(), params);
+                constructors.insert(name.data.clone(), params);
             }
 
-            self.modules.get_mut(module_path).unwrap().constructors.insert(name.data.clone(), map);
+            self.modules.get_mut(module_path).unwrap().constructors.insert(
+                name.data.clone(),
+                constructors
+            );
         }
     }
 
     fn function_interface(&mut self, module_path: &Symbol, functions: &HashMap<Symbol, Function>) {
-        for Function { name, params, ret, branches: _ } in functions.values() {
+        for Function { name, params, ret, .. } in functions.values() {
             let function_type = (
                 params
                     .iter()
@@ -288,36 +305,36 @@ impl TypeChecker {
                 ret.as_ref().map_or(Type::Nothing, |ret| self.eval_type_expr(ret))
             );
 
-            self.modules.get_mut(module_path).unwrap().functions.insert(name.data.clone(), function_type);
+            self.modules.get_mut(module_path).unwrap().functions.insert(
+                name.data.clone(),
+                function_type
+            );
         }
     }
 
-    fn get_import_types(&mut self, Import { parts: _, kind, directs: _ }: &Import) {
+    fn get_import_types(&mut self, Import { kind, .. }: &Import) {
         match kind {
             module::ImportKind::File(module) => {
                 if self.modules.contains_key(&module.path) {
-                    // already encountered the module.
+                    // Already encountered the module.
                     return;
                 }
 
-                self.modules.insert(module.path.clone(), Types::default());
-
+                self.modules.insert(module.path.clone(), Types::with_module(module));
                 // NOTE: Order here is important! (imports => types => constructors => functions)
                 self.import_interface(&module.imports);
                 self.type_interface(&module.path, &module.types);
                 self.constructor_interface(&module.path, &module.types);
                 self.function_interface(&module.path, &module.functions);
             },
-            module::ImportKind::Folder((imports, _path)) => {
-                self.import_interface(imports);
-            },
+            module::ImportKind::Folder((imports, _)) => self.import_interface(imports)
         }
     }
 
-    fn import_interface(&mut self, imports: &HashMap<Box<str>, Import>) {
-        for (_, import) in imports {
-            self.get_import_types(import);
-        }
+    fn import_interface(&mut self, imports: &HashMap<Symbol, Import>) {
+        imports
+            .values()
+            .for_each(|import| self.get_import_types(import));
     }
 }
 
@@ -354,9 +371,18 @@ impl HasSpan for TypeCheckError {}
 
 type TypeCheckResult<T> = Result<T, Spanned<TypeCheckError>>;
 
-#[derive(Default, Debug)]
 pub struct Types {
     functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
     types: HashMap<Symbol, typ::Type>,
     constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
+}
+
+impl Types {
+    fn with_module(module: &Module) -> Self {
+        Self {
+            functions: HashMap::with_capacity(module.functions.len()),
+            types: HashMap::with_capacity(module.types.len()),
+            constructors: HashMap::with_capacity(module.types.len())
+        }
+    }
 }

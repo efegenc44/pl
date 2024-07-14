@@ -40,7 +40,7 @@ fn start_from_file(file_path: &str) -> io::Result<()> {
         Err(error) => return error.report(file_path, &read_to_string(file_path)?)
     };
 
-    if let Err(error) = TypeChecker::new(&resolved_module).type_check_module(&resolved_module) {
+    if let Err(error) = TypeChecker::with_module(&resolved_module).type_check_module(&resolved_module) {
         return error.report(file_path, &read_to_string(file_path)?)
     };
 
@@ -55,7 +55,7 @@ fn start_repl() -> io::Result<()> {
     let stdin = stdin();
     let module = Module::default();
     let mut resolver = NameResolver::new(&module);
-    let mut type_checker = TypeChecker::new(&module);
+    let mut type_checker = TypeChecker::with_module(&module);
     let mut evaluator = Evaluator::with_module(&module);
 
     loop {
