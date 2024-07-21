@@ -139,6 +139,7 @@ pub enum Declaration {
         path: Symbol,
     },
     Type {
+        type_vars: Option<Vec<Spanned<Symbol>>>,
         name: Spanned<Symbol>,
         consts: Vec<(Spanned<Symbol>, Vec<TypeExpression>)>
     }
@@ -163,7 +164,7 @@ pub struct TypeFunction {
 
 #[derive(Clone, Debug)]
 pub enum TypeExpression {
-    Identifier(Spanned<Symbol>, Bound),
+    Identifier(Spanned<Symbol>, Bound, Option<Vec<TypeExpression>>),
     Function(TypeFunction),
-    Access(Vec<Spanned<Symbol>>, AbsoluteBound)
+    Access(Vec<Spanned<Symbol>>, AbsoluteBound, Option<Vec<TypeExpression>>),
 }

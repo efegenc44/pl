@@ -15,6 +15,7 @@ use super::{
 pub struct NameResolver {
     names: Names,
     locals: Vec<Symbol>,
+    type_locals: Vec<Symbol>,
     module_path: Symbol
 }
 
@@ -23,6 +24,7 @@ impl NameResolver {
         Self {
             names: Self::collect_names(module),
             locals: Vec::new(),
+            type_locals: Vec::new(),
             module_path: module.path.clone(),
         }
     }
@@ -408,15 +410,16 @@ impl NameResolver {
 
     fn resolve_type_expr(&mut self, type_expr: TypeExpression) -> ResolutionResult<TypeExpression> {
         match type_expr {
-            TypeExpression::Identifier(identifier, _) => self.resolve_type_identifier(identifier),
+            TypeExpression::Identifier(identifier, _, args) => self.resolve_type_identifier(identifier, args),
             TypeExpression::Function(type_function) => self.resolve_type_function(type_function),
-            TypeExpression::Access(path, _) => self.resolve_type_access(path),
+            TypeExpression::Access(path, _, args) => self.resolve_type_access(path, args),
         }
     }
 
-    fn resolve_type_identifier(&self, identifier: Spanned<Symbol>) -> ResolutionResult<TypeExpression> {
-        // TODO: Local type variables for polymorphic types.
-        let bound = if self.names.types.contains_key(&identifier.data) {
+    fn resolve_type_identifier(&mut self, identifier: Spanned<Symbol>, args: Option<Vec<TypeExpression>>) -> ResolutionResult<TypeExpression> {
+        let bound = if let Some(indice) = self.type_locals.iter().rev().position(|local| local == &identifier.data) {
+            Bound::Local(indice)
+        } else if self.names.types.contains_key(&identifier.data) {
             Bound::Absolute(AbsoluteBound::Module(ModuleBound { module: self.module_path.clone(), name: identifier.data.clone() }))
         } else if let Some((_, bound)) = self.names.type_directs.get(&identifier.data) {
             Bound::Absolute(AbsoluteBound::Module(bound.clone()))
@@ -424,7 +427,17 @@ impl NameResolver {
             return Err(ResolutionError::UnboundIdentifier(identifier.data.clone()).attach(identifier.span))
         };
 
-        Ok(TypeExpression::Identifier(identifier, bound))
+        let args = if let Some(args) = args {
+            let mut resolved_args = vec![];
+            for arg in args {
+                resolved_args.push(self.resolve_type_expr(arg)?)
+            }
+            Some(resolved_args)
+        } else {
+            None
+        };
+
+        Ok(TypeExpression::Identifier(identifier, bound, args))
     }
 
     fn resolve_type_function(&mut self, TypeFunction { params, ret }: TypeFunction) -> ResolutionResult<TypeExpression> {
@@ -437,7 +450,7 @@ impl NameResolver {
         Ok(TypeExpression::Function(TypeFunction { ret, params }))
     }
 
-    fn resolve_type_access(&self, path: Vec<Spanned<Symbol>>) -> ResolutionResult<TypeExpression> {
+    fn resolve_type_access(&mut self, path: Vec<Spanned<Symbol>>, args: Option<Vec<TypeExpression>>) -> ResolutionResult<TypeExpression> {
         let bound = match &path[..] {
             [_] | [] => unreachable!(),
             [from, name] => {
@@ -494,7 +507,17 @@ impl NameResolver {
             }
         };
 
-        Ok(TypeExpression::Access(path, bound))
+        let args = if let Some(args) = args {
+            let mut resolved_args = vec![];
+            for arg in args {
+                resolved_args.push(self.resolve_type_expr(arg)?)
+            }
+            Some(resolved_args)
+        } else {
+            None
+        };
+
+        Ok(TypeExpression::Access(path, bound, args))
     }
 
     fn resolve_function(&mut self, Function { name, params, ret, branches }: Function) -> ResolutionResult<Function> {
@@ -537,7 +560,13 @@ impl NameResolver {
 
     fn resolve_types(&mut self, types: HashMap<Symbol, module::Type>) -> ResolutionResult<HashMap<Symbol, module::Type>> {
         let mut resolved_types = HashMap::new();
-        for (type_name, module::Type { name, consts }) in types {
+        for (type_name, module::Type { type_vars, name, consts }) in types {
+            if let Some(type_vars) = type_vars.as_ref() {
+                for type_var in type_vars {
+                    self.type_locals.push(type_var.data.clone())
+                }
+            }
+
             let mut resolved_constructors = vec![];
             for (name, params) in consts {
                 let params = params
@@ -546,7 +575,9 @@ impl NameResolver {
                     .collect::<Result<Vec<_>, _>>()?;
                 resolved_constructors.push((name, params));
             }
-            resolved_types.insert(type_name, module::Type { name, consts: resolved_constructors });
+
+            self.locals.truncate(self.type_locals.len() - type_vars.as_ref().map(|t| t.len()).unwrap_or(0));
+            resolved_types.insert(type_name, module::Type { type_vars, name, consts: resolved_constructors });
         }
 
         Ok(resolved_types)

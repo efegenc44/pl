@@ -195,9 +195,19 @@ impl<'source> Parser<'source> {
                 path.push(self.expect_identifier()?);
             }
 
-            TypeExpression::Access(path, AbsoluteBound::Undetermined)
+            let args = self.optional(|this|
+                Self::comma_seperated_until(this, Self::type_expr, Token::ClosingParenthesis),
+                Token::OpeningParenthesis
+            )?;
+
+            TypeExpression::Access(path, AbsoluteBound::Undetermined, args)
         } else {
-            TypeExpression::Identifier(identifier, Bound::None)
+            let args = self.optional(|this|
+                Self::comma_seperated_until(this, Self::type_expr, Token::ClosingParenthesis),
+                Token::OpeningParenthesis
+            )?;
+
+            TypeExpression::Identifier(identifier, Bound::None, args)
         })
     }
 
@@ -374,13 +384,18 @@ impl<'source> Parser<'source> {
     fn typee(&mut self) -> ParseResult<Declaration> {
         self.expect(Token::KeywordType)?;
         let name = self.expect_identifier()?;
+        let type_vars = self.optional(|this|
+            Self::comma_seperated_until(this, Self::expect_identifier, Token::ClosingParenthesis),
+            Token::OpeningParenthesis
+        )?;
+
         self.expect(Token::Equals)?;
         let mut consts = vec![self.type_constructor()?];
         while self.next_peek_is(&Token::Bar) {
             consts.push(self.type_constructor()?);
         }
 
-        Ok(Declaration::Type { name, consts })
+        Ok(Declaration::Type { type_vars, name, consts })
     }
 
     fn declaration(&mut self) -> ParseResult<Declaration> {

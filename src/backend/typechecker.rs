@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display, iter};
 
-use crate::frontend::{span::{HasSpan, Spanned}, token::Symbol};
+use crate::frontend::{span::{HasSpan, Span, Spanned}, token::Symbol};
 
 use super::{
     ast::{
@@ -70,7 +70,7 @@ impl TypeChecker {
 
     fn type_check_application(&mut self, Application { expr, args }: &Application) -> TypeCheckResult<Type> {
         let typ = self.type_check_expr(expr)?;
-        let Type::Function { params, ret } = typ else {
+        let Type::Function { vars, params, ret } = typ else {
             return Err(TypeCheckError::ExpectedFunction(typ).attach(expr.span()))
         };
 
@@ -78,19 +78,91 @@ impl TypeChecker {
             return Err(TypeCheckError::ArityMismatch { expected: params.len(), found: args.len() }.attach(expr.span()))
         }
 
+        let table = if let Some(vars) = vars {
+            self.initialize_type_var_table(vars, &params, args)?
+        } else {
+            Vec::new()
+        };
+
+        let params: Vec<_> = params
+            .iter()
+            .map(|param| Self::substitute_type(&table, param))
+            .collect();
+
         for (arg, param) in iter::zip(args, params) {
-            self.expect_type(arg, &param)?;
+            let typ = self.type_check_expr(arg)?;
+            self.expect_type(&typ, &param, &arg.span())?;
         }
 
-        Ok(*ret)
+        Ok(Self::substitute_type(&table, &ret))
+    }
+
+    fn substitute_type(table: &[Type], typ: &Type) -> Type {
+        match typ {
+            Type::Function { vars, params, ret } => {
+                if vars.is_none() {
+                    typ.clone()
+                } else {
+                    let params = params
+                        .iter()
+                        .map(|param| Self::substitute_type(table, param))
+                        .collect();
+                    let ret = Box::new(Self::substitute_type(table, ret));
+                    Type::Function { vars: None, params, ret }
+                }
+            },
+            Type::Custom(vars, name) => {
+                if vars.is_none() {
+                    typ.clone()
+                } else {
+                    let mut table = table.to_vec();
+                    table.reverse();
+                    Type::Composite(name.clone(), table)
+                }
+            },
+            Type::Variable(indice) => table[*indice].clone(),
+            _ => typ.clone()
+        }
+    }
+
+    fn initialize_type_var_table(&mut self, vars: Vec<Symbol>, params: &[Type], args: &[Expression]) -> TypeCheckResult<Vec<Type>> {
+        let mut table = vec![];
+        for var in 0..vars.len() {
+            table.push(Type::Variable(var));
+        }
+
+        for (arg, param) in iter::zip(args, params) {
+            match param {
+                Type::Variable(indice) => {
+                    if !matches!(table.get(*indice).unwrap(), Type::Variable(_)) {
+                        continue;
+                    }
+
+                    let typ = self.type_check_expr(arg)?;
+                    table[*indice] = typ;
+
+                    if table.len() == vars.len() {
+                        break;
+                    }
+                },
+                _ => ()
+            }
+        }
+
+        if table.len() != vars.len() {
+            todo!("Unused type variable.")
+        }
+
+        Ok(table)
     }
 
     fn type_check_let(&mut self, Let { expr, type_expr, branches }: &Let) -> TypeCheckResult<Type> {
         // TODO: Check pattern exhaustiveness.
         let typ = if let Some(typ) = type_expr {
             let typ = self.eval_type_expr(typ);
-            self.expect_type(expr, &typ)?;
-            typ
+            let expr_typ = self.type_check_expr(expr)?;
+            self.expect_type(&expr_typ, &typ, &expr.span())?;
+            expr_typ
         } else {
             self.type_check_expr(expr)?
         };
@@ -102,7 +174,8 @@ impl TypeChecker {
 
         for (pattern, body) in &branches[1..] {
             let local_count = self.define_pattern_types(pattern, &typ)?;
-            self.expect_type(body, &result)?;
+            let typ = self.type_check_expr(body)?;
+            self.expect_type(&typ, &result, &body.span())?;
             self.locals.truncate(self.locals.len() - local_count);
             assert!(self.locals.is_empty())
         }
@@ -114,14 +187,15 @@ impl TypeChecker {
         match abs_bound {
             AbsoluteBound::Module(ModuleBound { module, name }) => {
                 let (params, ret) = (&self.modules[module].functions)[name].clone();
-                Type::Function { params, ret: Box::new(ret) }
+                // Polymorphic functions.
+                Type::Function { vars: None, params, ret: Box::new(ret) }
             },
             AbsoluteBound::Constructor(ConstructorBound { module, typ, name }) => {
                 let interface = &self.modules[module];
                 // TODO: If constructor does not take any arguments, does not return a function type
                 let ret = interface.types[typ].clone();
-                let params = interface.constructors[typ][name].clone();
-                Type::Function { params, ret: Box::new(ret) }
+                let (vars, params) = interface.constructors[typ][name].clone();
+                Type::Function { vars, params, ret: Box::new(ret) }
             }
             AbsoluteBound::Undetermined => unreachable!("Name Resolver must've resolved all access expressions."),
         }
@@ -133,7 +207,35 @@ impl TypeChecker {
                 self.locals.push(typ.clone());
                 Ok(1)
             },
-            (Pattern::Constructor { params, abs_bound, .. }, Type::Custom(type_name)) => {
+            (Pattern::Constructor { abs_bound, params, .. }, Type::Composite(name, args)) => {
+                let type_function = match abs_bound {
+                    AbsoluteBound::Constructor(ConstructorBound { typ: typ_name, .. }) => {
+                        if typ_name != name {
+                            return Err(TypeCheckError::PatternMismatch(typ.clone()).attach(pattern.span()))
+                        }
+
+                        // inline
+                        self.type_check_access(abs_bound)
+                    },
+                    _ => unreachable!()
+                };
+
+                let Type::Function { params: cparams, .. } = Self::substitute_type(args, &type_function) else {
+                    unreachable!()
+                };
+
+                if cparams.len() != params.len() {
+                    return Err(TypeCheckError::ArityMismatch { expected: params.len(), found: cparams.len() }.attach(pattern.span()))
+                }
+
+                let mut local_count = 0;
+                for (cparam, param) in iter::zip(cparams, params) {
+                    local_count += self.define_pattern_types(param, &cparam)?;
+                }
+
+                Ok(local_count)
+            }
+            (Pattern::Constructor { params, abs_bound, .. }, Type::Custom(_vars, type_name)) => {
                 let type_function = match abs_bound {
                     AbsoluteBound::Constructor(ConstructorBound { typ: typ_name, .. }) => {
                         if typ_name != type_name {
@@ -168,10 +270,36 @@ impl TypeChecker {
         }
     }
 
-    fn expect_type(&mut self, expr: &Expression, expected: &Type) -> TypeCheckResult<()> {
-        let found = self.type_check_expr(expr)?;
-        if &self.type_check_expr(expr)? != expected {
-            return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(expr.span()))
+    fn expect_type(&mut self, typ: &Type, expected: &Type, span: &Span) -> TypeCheckResult<()> {
+        let found = typ.clone();
+        match (&found, expected) {
+            (Type::Variable(_), _) => (),
+            (Type::Custom(_, type_name), Type::Composite(cname, _)) => if cname != type_name {
+                return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
+            },
+            (Type::Composite(name1, args1), Type::Composite(name2, args2)) => {
+                if name1 != name2 {
+                    return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
+                }
+
+                for (arg1, arg2) in iter::zip(args1, args2) {
+                    self.expect_type(arg1, arg2, span)?;
+                }
+            }
+            (Type::Function { vars: vars1, params: params1, ret: ret1 },
+             Type::Function { vars: vars2, params: params2, ret: ret2 }) => {
+                assert!(vars1.is_none());
+                assert!(vars2.is_none());
+
+                for (param1, param2) in iter::zip(params1, params2) {
+                    self.expect_type(param1, param2, span)?;
+                }
+
+                self.expect_type(ret1, ret2, span)?;
+            }
+            _ => if &found != expected {
+                return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
+            }
         }
 
         Ok(())
@@ -179,16 +307,16 @@ impl TypeChecker {
 
     fn eval_type_expr(&mut self, type_expr: &TypeExpression) -> Type {
         match type_expr {
-            TypeExpression::Identifier(_, bound) => self.eval_type_identifier(bound),
+            TypeExpression::Identifier(_, bound, args) => self.eval_type_identifier(bound, args),
             TypeExpression::Function(type_function) => self.eval_type_function(type_function),
-            TypeExpression::Access(_, abs_bound) => self.type_check_type_access(abs_bound),
+            TypeExpression::Access(_, abs_bound, args) => self.type_check_type_access(abs_bound, args),
         }
     }
 
-    fn eval_type_identifier(&mut self, bound: &Bound) -> Type {
+    fn eval_type_identifier(&mut self, bound: &Bound, args: &Option<Vec<TypeExpression>>) -> Type {
         match bound {
-            Bound::Local(_indice) => todo!("Local Type Variables"),
-            Bound::Absolute(abs_bound) => self.type_check_type_access(abs_bound),
+            Bound::Local(indice) => Type::Variable(*indice),
+            Bound::Absolute(abs_bound) => self.type_check_type_access(abs_bound, args),
             Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
         }
     }
@@ -200,15 +328,32 @@ impl TypeChecker {
             .collect();
         let ret = Box::new(self.eval_type_expr(ret));
 
-        Type::Function { params, ret }
+        // TODO: Polymorphic functions
+        Type::Function { vars: None, params, ret }
     }
 
-    fn type_check_type_access(&self, abs_bound: &AbsoluteBound) -> Type {
+    fn type_check_type_access(&mut self, abs_bound: &AbsoluteBound, args: &Option<Vec<TypeExpression>>) -> Type {
         let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
             unreachable!()
         };
 
-        self.modules[module].types[name].clone()
+        let typ = self.modules[module].types[name].clone();
+
+        if let Some(args) = args {
+            match typ {
+                Type::Custom(type_vars, name) => {
+                    let args: Vec<_> = args.iter().map(|arg| self.eval_type_expr(arg)).collect();
+                    if args.iter().all(|arg| matches!(arg, Type::Variable(_))) {
+                        Type::Custom(type_vars, name)
+                    } else {
+                        Type::Composite(name, args)
+                    }
+                },
+                _ => todo!("Non polymorphic type.")
+            }
+        } else {
+            typ
+        }
     }
 
     fn type_check_function(&mut self, module_path: &Symbol, Function { name, branches, .. }: &Function) -> TypeCheckResult<()> {
@@ -224,7 +369,8 @@ impl TypeChecker {
                 local_count += self.define_pattern_types(pattern, &typ)?;
             }
 
-            self.expect_type(body, &ret)?;
+            let typ = self.type_check_expr(body)?;
+            self.expect_type(&typ, &ret, &body.span())?;
             self.locals.truncate(self.locals.len() - local_count);
             assert!(self.locals.is_empty())
         }
@@ -258,23 +404,36 @@ impl TypeChecker {
     }
 
     fn type_interface(&mut self, module_path: &Symbol, types: &HashMap<Symbol, module::Type>) {
-        for module::Type { name, .. } in types.values() {
+        for module::Type { type_vars, name, .. } in types.values() {
+            let type_vars = type_vars.as_ref().map(|t| t
+                .iter()
+                .map(|var| var.data.clone())
+                .collect::<Vec<_>>()
+            );
+
             self.modules.get_mut(module_path).unwrap().types.insert(
                 name.data.clone(),
-                Type::Custom(name.data.clone())
+                Type::Custom(type_vars, name.data.clone())
             );
         }
     }
 
     fn constructor_interface(&mut self, module_path: &Symbol, types: &HashMap<Symbol, module::Type>) {
-        for module::Type { name, consts } in types.values() {
+        for module::Type { type_vars, name, consts, .. } in types.values() {
             let mut constructors = HashMap::with_capacity(consts.len());
             for (name, params) in consts {
                 let params = params
                     .iter()
                     .map(|param| self.eval_type_expr(param))
                     .collect();
-                constructors.insert(name.data.clone(), params);
+
+                let vars = type_vars.as_ref().map(|t| t
+                    .iter()
+                    .map(|var| var.data.clone())
+                    .collect::<Vec<_>>()
+                );
+
+                constructors.insert(name.data.clone(), (vars, params));
             }
 
             self.modules.get_mut(module_path).unwrap().constructors.insert(
@@ -363,7 +522,7 @@ type TypeCheckResult<T> = Result<T, Spanned<TypeCheckError>>;
 pub struct Types {
     functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
     types: HashMap<Symbol, typ::Type>,
-    constructors: HashMap<Symbol, HashMap<Symbol, Vec<typ::Type>>>,
+    constructors: HashMap<Symbol, HashMap<Symbol, (Option<Vec<Symbol>>, Vec<typ::Type>)>>,
 }
 
 impl Types {

@@ -1,0 +1,19 @@
+type List(T)
+    = Nil
+    | Cons(T, List(T))
+
+type Tip = Tip
+type A = A
+
+type Either(L, R) = Left(L) | Right(R) | Empty
+
+func main2() -> List(Tip) = ->
+    List::Cons(Tip::Tip(), List::Cons(Tip::Tip(), List::Cons(Tip::Tip(), List::Nil())))
+
+func main3() -> Either(Tip, A) = ->
+    Either::Left(Tip::Tip())
+
+func main() -> List(Either(A, Tip)) = ->
+    let List::Nil()
+        = a -> a
+        | List::Cons(f, List::Nil()) -> f

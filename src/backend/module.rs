@@ -31,9 +31,9 @@ impl Module {
                     let module_name = parts.last().unwrap().data.clone();
                     imports.insert(module_name, Import { kind: Self::import_kind(kind, &parts, path.clone())?, parts, directs });
                 },
-                Declaration::Type { name, consts } => {
+                Declaration::Type { type_vars, name, consts } => {
                     if !types.contains_key(&name.data) {
-                        types.insert(name.data.clone(), Type { name, consts });
+                        types.insert(name.data.clone(), Type { type_vars, name, consts });
                     } else {
                         return Err(ModuleError::DuplicateDeclaration(name.data.clone()).attach(name.span))
                     }
@@ -109,6 +109,7 @@ pub struct Import {
 }
 
 pub struct Type {
+    pub type_vars: Option<Vec<Spanned<Symbol>>>,
     pub name: Spanned<Symbol>,
     pub consts: Vec<(Spanned<Symbol>, Vec<TypeExpression>)>
 }
