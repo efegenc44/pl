@@ -16,4 +16,4 @@ func main3() -> Either(Tip, A) = ->
 func main() -> List(Either(A, Tip)) = ->
     let List::Nil()
         = a -> a
-        | List::Cons(f, List::Nil()) -> f
+        | List::Cons(f, h) -> List::Cons(Either::Left(Tip::Tip()), List::Nil())

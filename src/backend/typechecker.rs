@@ -274,6 +274,7 @@ impl TypeChecker {
         let found = typ.clone();
         match (&found, expected) {
             (Type::Variable(_), _) => (),
+            (_, Type::Variable(_)) => (),
             (Type::Custom(_, type_name), Type::Composite(cname, _)) => if cname != type_name {
                 return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
             },
