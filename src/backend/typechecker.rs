@@ -133,20 +133,14 @@ impl TypeChecker {
                 self.locals.push(typ.clone());
                 Ok(1)
             },
-            (Pattern::String(_), Type::String)
-            | (Pattern::Integer(_), Type::Integer)
-            | (Pattern::Float(_), Type::Float) => Ok(0),
             (Pattern::Constructor { params, abs_bound, .. }, Type::Custom(type_name)) => {
                 let type_function = match abs_bound {
-                    AbsoluteBound::Constructor(ConstructorBound { module, typ: typ_name, .. }) => {
-                        let Type::Custom(typ_name) = self.type_check_type_access(module, typ_name) else {
-                            unreachable!();
-                        };
-
-                        if &typ_name != type_name {
+                    AbsoluteBound::Constructor(ConstructorBound { typ: typ_name, .. }) => {
+                        if typ_name != type_name {
                             return Err(TypeCheckError::PatternMismatch(typ.clone()).attach(pattern.span()))
                         }
 
+                        // inline
                         self.type_check_access(abs_bound)
                     },
                     _ => unreachable!()
@@ -167,6 +161,9 @@ impl TypeChecker {
 
                 Ok(local_count)
             },
+            (Pattern::String(_), Type::String)
+            | (Pattern::Integer(_), Type::Integer)
+            | (Pattern::Float(_), Type::Float) => Ok(0),
             _ => Err(TypeCheckError::PatternMismatch(typ.clone()).attach(pattern.span()))
         }
     }
@@ -184,26 +181,14 @@ impl TypeChecker {
         match type_expr {
             TypeExpression::Identifier(_, bound) => self.eval_type_identifier(bound),
             TypeExpression::Function(type_function) => self.eval_type_function(type_function),
-            TypeExpression::Access(_, abs_bound) => {
-                let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
-                    unreachable!()
-                };
-
-                self.type_check_type_access(module, name)
-            },
+            TypeExpression::Access(_, abs_bound) => self.type_check_type_access(abs_bound),
         }
     }
 
     fn eval_type_identifier(&mut self, bound: &Bound) -> Type {
         match bound {
             Bound::Local(_indice) => todo!("Local Type Variables"),
-            Bound::Absolute(abs_bound) => {
-                let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
-                    unreachable!()
-                };
-
-                self.type_check_type_access(module, name)
-            },
+            Bound::Absolute(abs_bound) => self.type_check_type_access(abs_bound),
             Bound::None => unreachable!("Name Resolver must've resolved all identifiers."),
         }
     }
@@ -218,8 +203,12 @@ impl TypeChecker {
         Type::Function { params, ret }
     }
 
-    fn type_check_type_access(&self, module: &Symbol, typ: &Symbol) -> Type {
-        self.modules[module].types[typ].clone()
+    fn type_check_type_access(&self, abs_bound: &AbsoluteBound) -> Type {
+        let AbsoluteBound::Module(ModuleBound { module, name }) = abs_bound else {
+            unreachable!()
+        };
+
+        self.modules[module].types[name].clone()
     }
 
     fn type_check_function(&mut self, module_path: &Symbol, Function { name, branches, .. }: &Function) -> TypeCheckResult<()> {
