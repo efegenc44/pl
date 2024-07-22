@@ -26,13 +26,16 @@ func fooo(Tip) -> A
     = t -> A::A()
 
 func main() -> A = ->
-    map(Tip::Tip(), fooo)
+    map(A::A(), id)
+
+func main7() -> List(Tip) = ->
+    foo(List::Cons(4, List::Nil()))
 
 func id: T (T) -> T
     = a -> a
 
 func foo: T, V (List(T)) -> List(V)
-    = List::Nil() -> List::Nil()
+    = a -> List::Nil()
 
 func map: G, H (G, func(G) -> H) -> H
     = t, f -> f(t)
