@@ -89,7 +89,7 @@ impl TypeChecker {
             .map(|param| Self::substitute_type(&table, param))
             .collect();
 
-        for (arg, param) in iter::zip(args, params) {
+        for (arg, param) in iter::zip(args, &params) {
             let typ = self.type_check_expr(arg)?;
             self.expect_type(&typ, &param, &arg.span())?;
         }
@@ -120,21 +120,25 @@ impl TypeChecker {
                     Type::Composite(name.clone(), table)
                 }
             },
+            Type::Composite(name, params) => {
+                let params = params
+                    .iter()
+                    .map(|param| Self::substitute_type(table, param))
+                    .collect();
+
+                Type::Composite(name.clone(), params)
+            }
             Type::Variable(indice) => table[*indice].clone(),
             _ => typ.clone()
         }
     }
 
     fn initialize_type_var_table(&mut self, vars: Vec<Symbol>, params: &[Type], args: &[Expression]) -> TypeCheckResult<Vec<Type>> {
-        let mut table = vec![];
-        for var in 0..vars.len() {
-            table.push(Type::Variable(var));
-        }
-
+        let mut table = vec![Type::Undetermined; vars.len()];
         for (arg, param) in iter::zip(args, params) {
             match param {
                 Type::Variable(indice) => {
-                    if !matches!(table.get(*indice).unwrap(), Type::Variable(_)) {
+                    if !matches!(table.get(*indice).unwrap(), Type::Undetermined) {
                         continue;
                     }
 
@@ -147,10 +151,6 @@ impl TypeChecker {
                 },
                 _ => ()
             }
-        }
-
-        if table.len() != vars.len() {
-            todo!("Unused type variable.")
         }
 
         Ok(table)
@@ -169,13 +169,14 @@ impl TypeChecker {
 
         let (first_pattern, first_body) = branches.first().unwrap();
         let local_count = self.define_pattern_types(first_pattern, &typ)?;
-        let result = self.type_check_expr(&first_body)?;
+        let mut result = self.type_check_expr(&first_body)?;
         self.locals.truncate(self.locals.len() - local_count);
 
         for (pattern, body) in &branches[1..] {
             let local_count = self.define_pattern_types(pattern, &typ)?;
             let typ = self.type_check_expr(body)?;
-            self.expect_type(&typ, &result, &body.span())?;
+            println!("expected: {result}, found: {typ}");
+            result = self.expect_type(&typ, &result, &body.span())?;
             self.locals.truncate(self.locals.len() - local_count);
             assert!(self.locals.is_empty())
         }
@@ -270,40 +271,54 @@ impl TypeChecker {
         }
     }
 
-    fn expect_type(&mut self, typ: &Type, expected: &Type, span: &Span) -> TypeCheckResult<()> {
+    fn expect_type(&mut self, typ: &Type, expected: &Type, span: &Span) -> TypeCheckResult<Type> {
         let found = typ.clone();
-        match (&found, expected) {
-            (Type::Variable(_), _) => (),
-            (_, Type::Variable(_)) => (),
-            (Type::Custom(_, type_name), Type::Composite(cname, _)) => if cname != type_name {
-                return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
+        let compatible_type = match (&found, expected) {
+            (Type::Undetermined, _) => expected.clone(),
+            (_, Type::Undetermined) => found,
+            (Type::Custom(_, type_name), Type::Composite(cname, _)) => {
+                if cname != type_name {
+                    return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
+                }
+
+                expected.clone()
             },
             (Type::Composite(name1, args1), Type::Composite(name2, args2)) => {
                 if name1 != name2 {
                     return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
                 }
 
+                let mut compatible_args = Vec::with_capacity(args2.len());
                 for (arg1, arg2) in iter::zip(args1, args2) {
-                    self.expect_type(arg1, arg2, span)?;
+                    compatible_args.push(self.expect_type(arg1, arg2, span)?);
                 }
+
+                Type::Composite(name2.clone(), compatible_args)
             }
             (Type::Function { vars: vars1, params: params1, ret: ret1 },
              Type::Function { vars: vars2, params: params2, ret: ret2 }) => {
                 assert!(vars1.is_none());
                 assert!(vars2.is_none());
 
+                let mut params = Vec::with_capacity(params2.len());
                 for (param1, param2) in iter::zip(params1, params2) {
-                    self.expect_type(param1, param2, span)?;
+                    params.push(self.expect_type(param1, param2, span)?);
                 }
 
-                self.expect_type(ret1, ret2, span)?;
-            }
-            _ => if &found != expected {
-                return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
-            }
-        }
+                let ret = Box::new(self.expect_type(ret1, ret2, span)?);
 
-        Ok(())
+                Type::Function { vars: vars2.clone(), params, ret }
+            }
+            _ => {
+                if &found != expected {
+                    return Err(TypeCheckError::TypeMismatch { expected: expected.clone(), found }.attach(span.clone()))
+                }
+
+                expected.clone()
+            }
+        };
+
+        Ok(compatible_type)
     }
 
     fn eval_type_expr(&mut self, type_expr: &TypeExpression) -> Type {
@@ -342,13 +357,9 @@ impl TypeChecker {
 
         if let Some(args) = args {
             match typ {
-                Type::Custom(type_vars, name) => {
+                Type::Custom(_type_vars, name) => {
                     let args: Vec<_> = args.iter().map(|arg| self.eval_type_expr(arg)).collect();
-                    if args.iter().all(|arg| matches!(arg, Type::Variable(_))) {
-                        Type::Custom(type_vars, name)
-                    } else {
-                        Type::Composite(name, args)
-                    }
+                    Type::Composite(name, args)
                 },
                 _ => todo!("Non polymorphic type.")
             }
