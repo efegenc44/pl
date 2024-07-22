@@ -271,7 +271,13 @@ impl<'source> Parser<'source> {
     fn func(&mut self) -> ParseResult<Declaration> {
         self.expect(Token::KeywordFunc)?;
         let name = self.expect_identifier()?;
-        self.expect(Token::OpeningParenthesis)?;
+        let type_vars = self.optional(|this|
+            Self::comma_seperated_until(this, Self::expect_identifier, Token::OpeningParenthesis),
+            Token::Colon
+        )?;
+        if type_vars.is_none(){
+            self.expect(Token::OpeningParenthesis)?;
+        }
         let params = self.comma_seperated_until(Self::type_expr, Token::ClosingParenthesis)?;
         let ret = self.optional(Self::type_expr, Token::RightArrow)?;
         self.expect(Token::Equals)?;
@@ -280,7 +286,7 @@ impl<'source> Parser<'source> {
             branches.push(self.func_branch()?);
         }
 
-        Ok(Declaration::Function { name, params, ret, branches })
+        Ok(Declaration::Function { name, type_vars, params, ret, branches })
     }
 
     fn func_branch(&mut self) -> ParseResult<(Vec<Pattern>, Expression)> {

@@ -13,8 +13,26 @@ func main2() -> List(Tip) = ->
 func main3() -> Either(Tip, A) = ->
     Either::Left(Tip::Tip())
 
-func main() -> List(Either(A, Tip)) = ->
+func main4() -> List(Either(Tip, A)) = ->
     let List::Nil()
         = a -> a
         | List::Cons(f, h) -> List::Cons(Either::Left(Tip::Tip()), List::Nil())
-        | List::Cons(f, h) -> List::Cons(3, List::Nil())
+        | List::Cons(f, h) -> List::Cons(Either::Right(A::A()), List::Nil())
+
+func main5() -> Tip = ->
+    id(Tip::Tip())
+
+func fooo(Tip) -> A
+    = t -> A::A()
+
+func main() -> A = ->
+    map(Tip::Tip(), fooo)
+
+func id: T (T) -> T
+    = a -> a
+
+func foo: T, V (List(T)) -> List(V)
+    = List::Nil() -> List::Nil()
+
+func map: G, H (G, func(G) -> H) -> H
+    = t, f -> f(t)

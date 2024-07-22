@@ -128,6 +128,7 @@ impl Pattern {
 pub enum Declaration {
     Function {
         name: Spanned<Symbol>,
+        type_vars: Option<Vec<Spanned<Symbol>>>,
         params: Vec<TypeExpression>,
         ret: Option<TypeExpression>,
         branches: Vec<(Vec<Pattern>, Expression)>

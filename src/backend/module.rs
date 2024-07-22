@@ -20,9 +20,9 @@ impl Module {
 
         for declaration in declarations {
             match declaration {
-                Declaration::Function { name, params, ret, branches  } => {
+                Declaration::Function { name, type_vars, params, ret, branches  } => {
                     if !functions.contains_key(&name.data) {
-                        functions.insert(name.data.clone(), Function { name, params, ret, branches  });
+                        functions.insert(name.data.clone(), Function { name, type_vars, params, ret, branches  });
                     } else {
                         return Err(ModuleError::DuplicateDeclaration(name.data.clone()).attach(name.span))
                     }
@@ -97,6 +97,7 @@ pub type ModuleResult<T> = Result<T, Spanned<ModuleError>>;
 
 pub struct Function {
     pub name: Spanned<Symbol>,
+    pub type_vars: Option<Vec<Spanned<Symbol>>>,
     pub params: Vec<TypeExpression>,
     pub ret: Option<TypeExpression>,
     pub branches: Vec<(Vec<Pattern>, Expression)>,

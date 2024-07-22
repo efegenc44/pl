@@ -520,12 +520,19 @@ impl NameResolver {
         Ok(TypeExpression::Access(path, bound, args))
     }
 
-    fn resolve_function(&mut self, Function { name, params, ret, branches }: Function) -> ResolutionResult<Function> {
+    fn resolve_function(&mut self, Function { name, type_vars, params, ret, branches }: Function) -> ResolutionResult<Function> {
+        if let Some(type_vars) = type_vars.as_ref() {
+            for type_var in type_vars {
+                self.type_locals.push(type_var.data.clone())
+            }
+        }
+
         let params = params
             .into_iter()
             .map(|param| self.resolve_type_expr(param))
             .collect::<Result<Vec<_>, _>>()?;
 
+        self.locals.truncate(self.type_locals.len() - type_vars.as_ref().map(|t| t.len()).unwrap_or(0));
         let mut resolved_branches = vec![];
         for (patterns, body) in branches {
             let patterns = patterns
@@ -546,7 +553,7 @@ impl NameResolver {
 
         let ret = ret.map(|type_expr| self.resolve_type_expr(type_expr)).transpose()?;
 
-        Ok(Function { name, params, ret, branches: resolved_branches })
+        Ok(Function { name, type_vars, params, ret, branches: resolved_branches })
     }
 
     fn resolve_functions(&mut self, functions: HashMap<Symbol, Function>) -> ResolutionResult<HashMap<Symbol, Function>> {

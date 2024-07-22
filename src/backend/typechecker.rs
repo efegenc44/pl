@@ -98,6 +98,10 @@ impl TypeChecker {
     }
 
     fn substitute_type(table: &[Type], typ: &Type) -> Type {
+        if table.is_empty() {
+            return typ.clone();
+        }
+
         match typ {
             Type::Function { vars, params, ret } => {
                 if vars.is_none() {
@@ -136,6 +140,7 @@ impl TypeChecker {
     fn initialize_type_var_table(&mut self, vars: Vec<Symbol>, params: &[Type], args: &[Expression]) -> TypeCheckResult<Vec<Type>> {
         let mut table = vec![Type::Undetermined; vars.len()];
         for (arg, param) in iter::zip(args, params) {
+            // TODO: Fix/Complete initialization of functions.
             match param {
                 Type::Variable(indice) => {
                     if !matches!(table.get(*indice).unwrap(), Type::Undetermined) {
@@ -149,6 +154,8 @@ impl TypeChecker {
                         break;
                     }
                 },
+                Type::Function { .. } => todo!(),
+                Type::Composite(..) => todo!(),
                 _ => ()
             }
         }
@@ -175,7 +182,6 @@ impl TypeChecker {
         for (pattern, body) in &branches[1..] {
             let local_count = self.define_pattern_types(pattern, &typ)?;
             let typ = self.type_check_expr(body)?;
-            println!("expected: {result}, found: {typ}");
             result = self.expect_type(&typ, &result, &body.span())?;
             self.locals.truncate(self.locals.len() - local_count);
             assert!(self.locals.is_empty())
@@ -187,9 +193,9 @@ impl TypeChecker {
     fn type_check_access(&self, abs_bound: &AbsoluteBound) -> Type {
         match abs_bound {
             AbsoluteBound::Module(ModuleBound { module, name }) => {
-                let (params, ret) = (&self.modules[module].functions)[name].clone();
+                let (vars, params, ret) = (&self.modules[module].functions)[name].clone();
                 // Polymorphic functions.
-                Type::Function { vars: None, params, ret: Box::new(ret) }
+                Type::Function { vars, params, ret: Box::new(ret) }
             },
             AbsoluteBound::Constructor(ConstructorBound { module, typ, name }) => {
                 let interface = &self.modules[module];
@@ -369,7 +375,7 @@ impl TypeChecker {
     }
 
     fn type_check_function(&mut self, module_path: &Symbol, Function { name, branches, .. }: &Function) -> TypeCheckResult<()> {
-        let (params, ret) = self.modules[module_path].functions[&name.data].clone();
+        let (_vars, params, ret) = self.modules[module_path].functions[&name.data].clone();
 
         for (patterns, body) in branches {
             if patterns.len() != params.len() {
@@ -456,8 +462,15 @@ impl TypeChecker {
     }
 
     fn function_interface(&mut self, module_path: &Symbol, functions: &HashMap<Symbol, Function>) {
-        for Function { name, params, ret, .. } in functions.values() {
+        for Function { name, type_vars, params, ret, .. } in functions.values() {
+            let vars = type_vars.as_ref().map(|t| t
+                .iter()
+                .map(|var| var.data.clone())
+                .collect::<Vec<_>>()
+            );
+
             let function_type = (
+                vars,
                 params
                     .iter()
                     .map(|param| self.eval_type_expr(param))
@@ -532,7 +545,7 @@ impl HasSpan for TypeCheckError {}
 type TypeCheckResult<T> = Result<T, Spanned<TypeCheckError>>;
 
 pub struct Types {
-    functions: HashMap<Symbol, (Vec<typ::Type>, typ::Type)>,
+    functions: HashMap<Symbol, (Option<Vec<Symbol>>, Vec<typ::Type>, typ::Type)>,
     types: HashMap<Symbol, typ::Type>,
     constructors: HashMap<Symbol, HashMap<Symbol, (Option<Vec<Symbol>>, Vec<typ::Type>)>>,
 }
