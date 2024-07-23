@@ -84,7 +84,7 @@ impl TypeChecker {
             Vec::new()
         };
 
-        let table = Self::substitue_refs(&table);
+        // let table = Self::substitue_refs(&table);
 
         let params: Vec<_> = params
             .iter()
@@ -100,6 +100,7 @@ impl TypeChecker {
         Ok(Self::substitute_type(&table, &ret))
     }
 
+    #[allow(unused)]
     fn substitue_refs(table: &[Type]) -> Vec<Type> {
         let mut new_table = table.clone().to_vec();
         for (index, typ) in table.iter().enumerate() {
@@ -109,7 +110,8 @@ impl TypeChecker {
         }
 
         if new_table.iter().any(|t| matches!(t, Type::Variable(_))) {
-            Self::substitue_refs(&new_table)
+            // Self::substitue_refs(&new_table)
+            new_table
         } else {
             new_table
         }
@@ -154,22 +156,33 @@ impl TypeChecker {
     fn initialize_type_var_table(&mut self, vars: Vec<Symbol>, params: &[Type], args: &[Expression]) -> TypeCheckResult<Vec<Type>> {
         let mut table = vec![Type::Undetermined; vars.len()];
         for (arg, param) in iter::zip(args, params) {
-            let typ = self.type_check_expr(arg)?;
-            Self::init_type(&mut table, param, typ);
+            if let Type::Variable(_) = param {
+                let typ = self.type_check_expr(arg)?;
+                table = Self::init_type(&table, param, typ);
+            }
+        }
+
+        for (arg, param) in iter::zip(args, params) {
+            if !matches!(param, Type::Variable(_)) {
+                let typ = self.type_check_expr(arg)?;
+                table = Self::init_type(&table, param, typ);
+            }
         }
 
         Ok(table)
     }
 
-    fn init_type(table: &mut [Type], param: &Type, typ: Type) {
+    fn init_type(table: &[Type], param: &Type, typ: Type) -> Vec<Type> {
+        let mut table = table.clone().to_vec();
         match (param, &typ) {
             (Type::Variable(indice), _) => {
                 if !matches!(table.get(*indice).unwrap(), Type::Undetermined) {
-                    return;
+                    return table;
                 }
 
-                table[*indice] = typ;
+                table[*indice] = typ.clone();
             },
+            (_, Type::Variable(_)) => (),
             (Type::Function { vars: vars1, params: params1, ret: ret1 },
              Type::Function { vars: vars2, params: params2, ret: ret2 }) => {
                 assert!(vars1.is_none());
@@ -179,7 +192,7 @@ impl TypeChecker {
                     Some(vars2) => {
                         let mut table2 = vec![Type::Undetermined; vars2.len()];
                         for (param, typ) in iter::zip(params2, params1) {
-                            Self::init_type(&mut table2, param, typ.clone());
+                            table2 = Self::init_type(&table2, param, typ.clone());
                         }
 
                         let params: Vec<_> = params2
@@ -190,27 +203,30 @@ impl TypeChecker {
                         let ret = Self::substitute_type(&table2, &ret2);
 
                         for (param, typ) in iter::zip(params1, params) {
-                            Self::init_type(table, param, typ.clone());
+                            table = Self::init_type(&table, param, typ.clone());
                         }
 
-                        Self::init_type(table, ret1, ret);
+                        table = Self::init_type(&table, ret1, ret);
+                        table = Self::substitue_refs(&table);
                     },
                     None => {
                         for (param, typ) in iter::zip(params1, params2) {
-                            Self::init_type(table, param, typ.clone());
+                            table = Self::init_type(&table, param, typ.clone());
                         }
 
-                        Self::init_type(table, ret1, *ret2.clone());
+                        table = Self::init_type(&table, ret1, *ret2.clone());
                     },
                 }
             },
             (Type::Composite(_, params), Type::Composite(_, types)) => {
                 for (param, typ) in iter::zip(params, types) {
-                    Self::init_type(table, param, typ.clone());
+                    table = Self::init_type(&table, param, typ.clone());
                 }
             },
-            _ => todo!("Error: type mismatch.")
+            _ => todo!("Error: type mismatch. param: {param}, type: {typ}")
         }
+
+        table
     }
 
     fn type_check_let(&mut self, Let { expr, type_expr, branches }: &Let) -> TypeCheckResult<Type> {
@@ -358,7 +374,7 @@ impl TypeChecker {
                 if let Some(vars1) = vars1 {
                     let mut table2 = vec![Type::Undetermined; vars1.len()];
                     for (param, typ) in iter::zip(params1, params2) {
-                        Self::init_type(&mut table2, param, typ.clone());
+                        table2 = Self::init_type(&table2, param, typ.clone());
                     }
 
                     let params1: Vec<_> = params1
@@ -462,7 +478,7 @@ impl TypeChecker {
             let typ = self.type_check_expr(body)?;
             self.expect_type(&typ, &ret, &body.span())?;
             self.locals.truncate(self.locals.len() - local_count);
-            assert!(self.locals.is_empty())
+            assert!(self.locals.is_empty());
         }
 
         Ok(())

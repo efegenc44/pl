@@ -1,0 +1,18 @@
+import nat (Nat (Succ, Zero), add)
+
+type List(T)
+    = Nil
+    | Cons(T, List(T))
+
+func list_map: G, H (List(H), func(H) -> G) -> List(G)
+    = List::Nil(),             f -> List::Nil()
+    | List::Cons(value, rest), f -> List::Cons(f(value), list_map(rest, f))
+
+func add1(Nat) -> Nat
+    = x -> Succ(x)
+
+func id: T (T) -> T
+    = x -> x
+
+func main() -> List(Nat) = ->
+    list_map(List::Cons(Zero(), List::Cons(Succ(Zero()), List::Nil())), add1)
