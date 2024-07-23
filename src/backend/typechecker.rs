@@ -100,8 +100,7 @@ impl TypeChecker {
         Ok(Self::substitute_type(&table, &ret))
     }
 
-    #[allow(unused)]
-    fn substitue_refs(table: &[Type]) -> Vec<Type> {
+    fn substitute_refs(table: &[Type]) -> Vec<Type> {
         let mut new_table = table.clone().to_vec();
         for (index, typ) in table.iter().enumerate() {
             if let Type::Variable(indice) = typ {
@@ -110,8 +109,7 @@ impl TypeChecker {
         }
 
         if new_table.iter().any(|t| matches!(t, Type::Variable(_))) {
-            // Self::substitue_refs(&new_table)
-            new_table
+            Self::substitute_refs(&new_table)
         } else {
             new_table
         }
@@ -207,7 +205,7 @@ impl TypeChecker {
                         }
 
                         table = Self::init_type(&table, ret1, ret);
-                        table = Self::substitue_refs(&table);
+                        table = Self::substitute_refs(&table);
                     },
                     None => {
                         for (param, typ) in iter::zip(params1, params2) {
